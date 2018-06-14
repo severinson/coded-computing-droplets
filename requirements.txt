@@ -1,0 +1,7 @@
+pip
+numpy
+scipy
+pandas
+numba
+matplotlib
+https://github.com/severinson/pynumeric/archive/master.zip
