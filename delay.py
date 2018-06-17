@@ -26,7 +26,30 @@ def delay_uncoded(lmr):
     ).mean()
     return result
 
-def delay_mean_empiric(lmr, overhead=1.1, n=100):
+def delay_classical(lmr):
+    '''Return the delay of the classical scheme of Lee based on MDS codes
+    and no partial computations.
+
+    '''
+    # delay due to the computation
+    rows_per_server = lmr.nrows/lmr.nservers/lmr.code_rate
+    result = rows_per_server*(lmr.ncols-1)*lmr.ADDITIONC
+    result += rows_per_server*lmr.ncols*lmr.MULTIPLICATIONC
+    result *= lmr.nvectors
+
+    # delay due to waiting for the q-th server
+    result += stats.ShiftexpOrder(
+        parameter=lmr.straggling,
+        total=lmr.nservers,
+        order=lmr.wait_for,
+    ).mean()
+
+    # delay due to decoding
+    result += lmr.decodingc
+
+    return result
+
+def delay_mean_empiric(lmr, overhead=1.1, d_tot=None, n=100):
     '''Return the simulated mean delay of the map phase.
 
     Assumes that the map phase ends whenever a total of d droplets
@@ -34,7 +57,8 @@ def delay_mean_empiric(lmr, overhead=1.1, n=100):
     assumes that which droplet to compute next is selected optimally.
 
     '''
-    d_tot = lmr.nrows*lmr.nvectors/lmr.droplet_size*overhead
+    if d_tot is None:
+        d_tot = lmr.nrows*lmr.nvectors/lmr.droplet_size*overhead
     result = 0
     max_drops = lmr.droplets_per_server*lmr.nvectors
     if max_drops * lmr.nservers < d_tot:
@@ -60,7 +84,7 @@ def delay_mean_centralized(lmr, overhead=1.1):
     t_decoding += lmr.decodingc*lmr.wait_for
     t_droplets = delay_estimate(d_per_vector*lmr.nvectors, lmr)
     t_droplets += lmr.decodingc*lmr.wait_for/lmr.nvectors
-    print('t_decoding/t_droplets', t_decoding, t_droplets, t_decoding/t_droplets, lmr.wait_for)
+    # print('t_decoding/t_droplets', t_decoding, t_droplets, t_decoding/t_droplets, lmr.wait_for)
     return max(t_decoding, t_droplets)
 
 @njit
@@ -83,11 +107,6 @@ def arg_from_order(droplet_order, nvectors, d):
             break
         i += 1
     return i
-
-def simulate_delay(nservers, nvectors, ):
-    '''Inner loop code of delay_mean_simulated()
-
-    '''
 
 def delay_mean_simulated(lmr, overhead=1.1, n=10, order='random'):
     '''Return the simulated mean delay of the map phase.
@@ -188,6 +207,22 @@ def drops_estimate(t, lmr):
     v /= 2*lmr.dropletc
     return max(lmr.nservers*v, 0)
 
+def drops_empiric(t, lmr, n=100):
+    '''Return the average number of droplets computed at time t. Result
+    due to simulations.
+
+    '''
+    result = 0
+    # max_drops = lmr.droplets_per_server*lmr.nvectors
+    max_drops = math.inf
+    dropletc = lmr.dropletc # cache this value
+    for _ in range(n):
+        a = delays(t, lmr)
+        result += np.floor(
+            np.minimum(np.maximum((t-a)/dropletc, 0), max_drops)
+        ).sum()
+    return result/n
+
 def delay_estimate(d_tot, lmr):
     '''Return an approximation of the delay t at which d droplets have
     been computed in total over the K servers. The inverse of
@@ -203,6 +238,12 @@ def delay_estimate(d_tot, lmr):
     Warg /= -2*lmr.straggling
     t += lmr.straggling * lambertw(Warg)
     return np.real(t)
+
+def delay_estimate_error(t, lmr):
+    '''Return an upper bound on the average error of delay_estimate.
+
+    '''
+    return lmr.nservers * (1-math.exp(-t/lmr.straggling))/2
 
 def delays(t, lmr):
     '''Return an array of length <= nservers with simulated delays <= t.
@@ -235,8 +276,6 @@ def server_pdf(t, lmr):
     i.e., pdf[0] is the probability that exactly 0 servers have a
     delay at most t, pdf[10] is the probability that 10 servers have a
     delay at most t etc.
-
-    TODO: update in paper
 
     '''
     pdf = np.zeros(lmr.nservers+1)

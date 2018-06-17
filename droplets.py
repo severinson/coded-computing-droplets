@@ -188,17 +188,21 @@ class LMR(object):
         return self.straggling_factor*result
 
 pool = Pool(processes=8)
-def simulate(f, lmrs, lmrds=None):
+def simulate(f, lmrs, cache=None, rerun=False):
     '''Compute the delay for each lmr in lmrs using f, i.e., f is called
     for each lmr in lmrs. Returns a dataframe.
 
     '''
+    if isinstance(cache, str) and not rerun:
+        try:
+            return pd.read_csv(cache+'.csv')
+        except:
+            pass
     logging.info('simulating {} lmrs'.format(len(lmrs)))
     df = pd.DataFrame([lmr.asdict() for lmr in lmrs])
-    if lmrds:
-        df['delay'] = pool.map(f, lmrds)
-    else:
-        df['delay'] = pool.map(f, lmrs)
+    df['delay'] = pool.map(f, lmrs)
+    if isinstance(cache, str):
+        df.to_csv(cache+'.csv', index=False)
     return df
 
 def wait_for_optimal(overhead, lmr):
@@ -206,12 +210,28 @@ def wait_for_optimal(overhead, lmr):
 
     '''
     wait_for_orig = lmr.wait_for
-    def f(wait_for):
+    def f(q):
         nonlocal overhead, lmr
-        lmr.wait_for = int(round(wait_for[0]))
+        lmr.wait_for = int(round(q[0]))
         return delay.delay_mean(lmr, overhead=overhead)
-    result = minimize(f, x0=lmr.nservers/2, bounds=[(1, lmr.nservers)])
-    wait_for = int(round(result.x[0]))
+        # if q > lmr.nservers:
+        #     return q * 1e32
+        # if q < 1:
+        #     return -(q-2) * 1e32
+        # lmr.wait_for = int(math.floor(q))
+        # d1 = delay.delay_mean(lmr, overhead=overhead)
+        # lmr.wait_for = int(math.ceil(q))
+        # d2 = delay.delay_mean(lmr, overhead=overhead)
+        # result = d1 * (math.ceil(q)-q) + d2 * (q-math.floor(q))
+        # return result
+
+    result = minimize(
+        f,
+        x0=lmr.nservers/2,
+        bounds=[(1, lmr.nservers)],
+        # method='Powell',
+    )
+    wait_for = int(result.x.round())
     lmr.wait_for = wait_for_orig
     return wait_for
 

@@ -206,7 +206,7 @@ class ShiftexpOrder(object):
         '''
         assert 0 < parameter < math.inf
         assert 0 < total < math.inf and total % 1 == 0
-        assert 0 <= order <= total and order % 1 == 0
+        assert 0 <= order <= total and order % 1 == 0, order
         self.parameter = parameter
         self.total = total
         self.order = order

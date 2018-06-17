@@ -12,6 +12,7 @@ import complexity
 from functools import partial
 from scipy.stats import expon
 from scipy.special import lambertw
+from scipy.optimize import minimize
 from numba import njit
 
 # pyplot setup
@@ -19,7 +20,7 @@ plt.style.use('seaborn-paper')
 plt.rc('pgf',  texsystem='pdflatex')
 plt.rc('text', usetex=True)
 plt.rcParams['text.latex.preamble'] = [r'\usepackage{lmodern}']
-plt.rcParams['figure.figsize'] = (4.2, 4.2)
+plt.rcParams['figure.figsize'] = (3, 3)
 plt.rcParams['figure.dpi'] = 300
 
 @njit
@@ -44,11 +45,6 @@ def delay_cdf_sim(x, d, n=100):
                 cdf[i] += 1
         cdf[i] /= n
     return cdf
-
-def droplet_mean_load_sim():
-    '''Return the mean communication load. Based on simulations.
-
-    '''
 
 def plot_cdf(num_droplets=2000):
     # x = np.linspace(0, 100*max(straggling_parameter, complexity), 10)
@@ -534,6 +530,49 @@ def straggling_plot():
     lmrs = get_parameters_straggling()
     uncoded = droplets.simulate(delay.delay_uncoded, lmrs)
 
+    # classical
+    for lmr in lmrs:
+        lmr.decodingf = partial(
+            complexity.bdc_decoding_complexity,
+            code_length=lmr.nservers,
+            partitions=1,
+            algorithm='fft',
+        )
+        lmr.wait_for = int(round(lmr.code_rate * lmr.nservers))
+    classical = droplets.simulate(
+        delay.delay_classical,
+        lmrs,
+    )
+    classical['delay'] /= uncoded['delay']
+
+    # BDC
+    for lmr in lmrs:
+        lmr.decodingf = complexity.decoding0
+        lmr.wait_for = 1
+    bdc = droplets.simulate(
+        partial(delay.delay_mean_simulated, overhead=1.0, n=100, order='heuristic'),
+        lmrs,
+        cache='bdc_straggling',
+    )
+
+    # add decoding/straggling delay
+    for i, lmr in enumerate(lmrs):
+        q, d = optimize_bdc(lmr)
+        tmp = bdc['delay'][i]
+        bdc.loc[i, 'delay'] += d
+
+    bdc['delay'] /= uncoded['delay']
+
+    # bound
+    for lmr in lmrs:
+        lmr.decodingf = complexity.decoding0
+        lmr.wait_for = 1
+    bound = droplets.simulate(
+        partial(delay.delay_mean, overhead=1.0),
+        lmrs,
+    )
+    bound['delay'] /= uncoded['delay']
+
     # centralized
     for lmr in lmrs:
         lmr.decodingf = partial(complexity.r10_complexity, reloverhead=1.02)
@@ -543,6 +582,16 @@ def straggling_plot():
         lmrs,
     )
     centralized['delay'] /= uncoded['delay']
+
+    # centralized LT
+    for lmr in lmrs:
+        lmr.decodingf = partial(complexity.lt_complexity, reloverhead=1.3)
+        lmr.set_wait_for()
+    clt = droplets.simulate(
+        partial(delay.delay_mean_centralized, overhead=1.3),
+        lmrs,
+    )
+    clt['delay'] /= uncoded['delay']
 
     # RQ
     for lmr in lmrs:
@@ -564,6 +613,16 @@ def straggling_plot():
     )
     r10['delay'] /= uncoded['delay']
 
+    # R10_d11
+    # for lmr in lmrs:
+    #     lmr.decodingf = partial(complexity.r10_complexity, max_deg=11, reloverhead=1.02)
+    #     lmr.set_wait_for()
+    # r10d11 = droplets.simulate(
+    #     partial(delay.delay_mean, overhead=1.020148),
+    #     lmrs,
+    # )
+    # r10d11['delay'] /= uncoded['delay']
+
     # LT
     for lmr in lmrs:
         lmr.decodingf = partial(complexity.lt_complexity, reloverhead=1.3)
@@ -577,10 +636,17 @@ def straggling_plot():
     # make plot
     plt.figure()
     plt.plot(r10['straggling_factor'], r10['delay'], r10_plot_string, markevery=0.2, label='R10')
+    # plt.plot(r10d11['straggling_factor'], r10d11['delay'], r10d11_plot_string, markevery=0.2, label='R10d11')
     plt.plot(rq['straggling_factor'], rq['delay'], rq_plot_string, markevery=0.2, label='RQ')
     plt.plot(lt['straggling_factor'], lt['delay'], lt_plot_string, markevery=0.2, label='LT')
+    plt.plot(bdc['straggling_factor'], bdc['delay'], bdc_plot_string, markevery=0.2, label='BDC [6]')
     plt.plot(centralized['straggling_factor'], centralized['delay'],
-             centralized_plot_string, markevery=0.2, label='R10, Centralized')
+             centralized_plot_string, markevery=0.2, label='R10 cent.')
+    # plt.plot(clt['straggling_factor'], clt['delay'],
+    #          '-', markevery=0.2, label='LT cent. [9]')
+    plt.plot(classical['straggling_factor'], classical['delay'],
+             classical_plot_string, markevery=0.2, label='Classical [4]')
+    plt.plot(bound['straggling_factor'], bound['delay'], bound_plot_string, markevery=0.2, label='Ideal')
 
     # random = droplets.simulate(delay.delay_mean_random, lmrs)
     # random['delay'] /= uncoded['delay']
@@ -601,13 +667,13 @@ def straggling_plot():
     # plt.plot(centralized['straggling_factor'], centralized['delay'],
     #          '-s', markevery=0.2, label='Centralized')
 
-    plt.grid()
+    plt.grid(linestyle='--')
     plt.ylabel(r'$D$')
-    plt.xlabel(r'$\beta/C$')
+    plt.xlabel(r'$\beta/\sigma_{\mathsf{K}}$')
     plt.xlim(1, 5)
     plt.ylim(0, 2)
-    plt.legend()
-    plt.savefig('./plots/istc18/straggling.pdf', dpi='figure')
+    plt.legend(framealpha=1, labelspacing=0.1, columnspacing=0.1, ncol=1, loc='best')
+    plt.savefig('./plots/istc18/straggling.pdf', dpi='figure', bbox_inches='tight')
     plt.show()
     return
 
@@ -615,67 +681,197 @@ def estimate_plot():
     '''Plot delay assuming a constant workload per server.
 
     '''
-    lmrs = get_parameters_workload()[-10:]
+    lmrs = get_parameters_workload()
     for lmr in lmrs:
         lmr.decodingf = partial(complexity.r10_complexity, reloverhead=1.02)
         lmr.set_wait_for()
 
-    # convert to numpy dtype
-    lmrds = [lmr.asdtype() for lmr in lmrs]
-    print(lmrds)
-
     uncoded = droplets.simulate(delay.delay_uncoded, lmrs)
     heuristic = droplets.simulate(
-        partial(delay.delay_mean_simulated, overhead=1.1, n=2, order='heuristic'),
+        partial(delay.delay_mean_simulated, overhead=1.020148, n=100, order='heuristic'),
         lmrs,
+        cache='heuristic',
     )
     heuristic['delay'] /= uncoded['delay']
-    print(heuristic)
     random = droplets.simulate(
-        partial(delay.delay_mean_simulated, n=2, order='random'),
+        partial(delay.delay_mean_simulated, overhead=1.020148, n=100, order='random'),
         lmrs,
+        cache='random',
     )
     random['delay'] /= uncoded['delay']
     # centralized = droplets.simulate(delay.delay_mean_centralized, lmrs)
     # centralized['delay'] /= uncoded['delay']
-    simulated = droplets.simulate(delay.delay_mean_empiric, lmrs)
+    simulated = droplets.simulate(
+        partial(delay.delay_mean_empiric, overhead=1.020148),
+        lmrs,
+    )
     simulated['delay'] /= uncoded['delay']
-    analytic = droplets.simulate(delay.delay_mean, lmrs)
+    analytic = droplets.simulate(
+        partial(delay.delay_mean, overhead=1.020148),
+        lmrs,
+    )
     analytic['delay'] /= uncoded['delay']
     plt.figure()
-    plt.plot(
-        simulated['nservers'], simulated['delay'],
-        '-o', markevery=0.2, label='Simulated (optimal)',
-    )
+    plt.plot(simulated['nservers'], simulated['delay'],
+             r10_plot_string, markevery=0.2, label='Simulated (optimal)')
     plt.plot(random['nservers'], random['delay'],
-             '--', label='Simulated (random)')
+             'g-^', markevery=0.2, label='Simulated (random)')
     plt.plot(heuristic['nservers'], heuristic['delay'],
-             '-v', markevery=0.2, label='Simulated (heuristic)')
-    plt.plot(analytic['nservers'], analytic['delay'], label='Analytic')
+             'r-s', markevery=0.3, label='Simulated (round-robin)')
+    plt.plot(analytic['nservers'], analytic['delay'], 'kd--', markevery=0.25, label='Analytic')
+    # plt.plot(
+    #     simulated['nservers'], simulated['delay'],
+    #     '-o', markevery=0.2, label='Simulated (optimal)',
+    # )
+    # plt.plot(analytic['nservers'], analytic['delay'], label='Analytic')
     # plt.plot(centralized['nservers'], centralized['delay'],
     #          '-s', markevery=0.2, label='Centralized')
-    plt.grid()
+    plt.grid(linestyle='--')
     plt.ylabel('$D$')
     plt.xlabel('$K$')
     plt.xlim(0, 600)
-    # plt.ylim(0.2, 0.8)
-    plt.legend()
-    # plt.savefig('./plots/istc18/workload.pdf', dpi='figure')
+    plt.ylim(0.2, 0.36)
+    plt.legend(framealpha=1)
+    plt.savefig('./plots/istc18/estimate.pdf', dpi='figure', bbox_inches='tight')
     plt.show()
     return
 
 r10_plot_string = 'b-o'
+r10d11_plot_string = 'g-v'
 rq_plot_string = 'g-^'
-lt_plot_string = 'k--'
+lt_plot_string = 'm-d'
+bdc_plot_string = 'c-*'
 centralized_plot_string = 'r-s'
+bound_plot_string = 'k-'
+classical_plot_string = 'g:'
+
+def optimize_q_bdc(lmr, num_partitions):
+    '''Optimize the value of q for the BDC scheme
+
+    '''
+    def f(q):
+        nonlocal lmr
+        q = q[0]
+        # q = int(round(q[0]))
+
+        # enforce bounds
+        if q > lmr.nservers:
+            return q * 1e32
+        if q < 1:
+            return -(q-2) * 1e32
+
+        decoding = complexity.bdc_decoding_complexity(
+            lmr,
+            partitions=num_partitions,
+        )
+        decoding *= lmr.nvectors / q
+
+        # interpolate between the floor and ceil of q
+        s1 = stats.ShiftexpOrder(
+            parameter=lmr.straggling,
+            total=lmr.nservers,
+            order=int(math.floor(q)),
+        ).mean()
+        s2 = stats.ShiftexpOrder(
+            parameter=lmr.straggling,
+            total=lmr.nservers,
+            order=int(math.ceil(q)),
+        ).mean()
+        straggling = s1 * (math.ceil(q)-q) + s2 * (q-math.floor(q))
+        return decoding + straggling
+
+    result = minimize(
+        f,
+        x0=lmr.nservers-1,
+        # bounds=[(1, lmr.nservers)],
+        method='Powell',
+    )
+    wait_for = int(result.x.round())
+    delay = result.fun
+
+    # add the overhead due to partitioning
+    # this is an upper bound
+    delay += lmr.dropletc * num_partitions / 2
+
+    return wait_for, delay
+
+def optimize_bdc(lmr):
+    '''Optimize the number of partitions and the number of servers to wait
+    for.
+
+    '''
+    min_q = None
+    min_d = math.inf
+    min_T = None
+    max_T = int(round(lmr.nrows / lmr.droplet_size))
+    for T in range(int(round(max_T*0.9)), max_T+1):
+        # if lmr.ndroplets % T != 0:
+        #     continue
+        q, d = optimize_q_bdc(lmr, T)
+        if d < min_d:
+            min_d = d
+            min_q = q
+            min_T = T
+
+    # print('T={}, q={} is optimal for lmr {}'.format(min_T, min_q, lmr))
+    return min_q, min_d
 
 def raptor_plot():
     lmrs = get_parameters_workload()
     uncoded = droplets.simulate(delay.delay_uncoded, lmrs)
 
-    # centralized
+    # classical
+    for lmr in lmrs:
+        lmr.decodingf = partial(
+            complexity.bdc_decoding_complexity,
+            code_length=lmr.nservers,
+            partitions=1,
+            algorithm='fft',
+        )
+        lmr.wait_for = int(round(lmr.code_rate * lmr.nservers))
+    classical = droplets.simulate(
+        delay.delay_classical,
+        lmrs,
+    )
+    classical['delay'] /= uncoded['delay']
+
+    # centralized LT
+    for lmr in lmrs:
+        lmr.decodingf = partial(complexity.lt_complexity, reloverhead=1.3)
+        lmr.set_wait_for()
+    clt = droplets.simulate(
+        partial(delay.delay_mean_centralized, overhead=1.3),
+        lmrs,
+    )
+    clt['delay'] /= uncoded['delay']
+
+    # BDC
+    for lmr in lmrs:
+        lmr.decodingf = complexity.decoding0
+        lmr.wait_for = 1
+    bdc = droplets.simulate(
+        partial(delay.delay_mean_simulated, overhead=1.0, n=100, order='heuristic'),
+        lmrs,
+        cache='bdc',
+    )
+
+    # add decoding/straggling delay
+    for i, lmr in enumerate(lmrs):
+        if i >= len(bdc):
+            continue
+        q, d = optimize_bdc(lmr)
+        tmp = bdc['delay'][i]
+        bdc.loc[i, 'delay'] += d
+        # print(lmr)
+        # print(q, d, tmp, tmp / bdc['delay'][i])
+        # print()
+
+    bdc['delay'] /= uncoded['delay']
+
+    # centralized R10
     for lmr in lmrs:
         lmr.decodingf = partial(complexity.r10_complexity, reloverhead=1.02)
+        lmr.set_wait_for()
     centralized = droplets.simulate(
         partial(delay.delay_mean_centralized, overhead=1.020148),
         lmrs,
@@ -702,6 +898,51 @@ def raptor_plot():
     )
     r10['delay'] /= uncoded['delay']
 
+    # R10 simulated, heuristic
+    rr = droplets.simulate(
+        partial(delay.delay_mean_simulated, overhead=1.020148, n=100, order='heuristic'),
+        lmrs,
+        cache='heuristic',
+    )
+    rr['delay'] /= uncoded['delay']
+
+    # R10 simulated, optimal
+    optimal = droplets.simulate(
+        partial(delay.delay_mean_empiric, overhead=1.020148),
+        lmrs,
+    )
+    optimal['delay'] /= uncoded['delay']
+
+    # bound
+    for lmr in lmrs:
+        lmr.decodingf = complexity.decoding0
+        lmr.wait_for = 1
+    bound = droplets.simulate(
+        partial(delay.delay_mean, overhead=1.0),
+        lmrs,
+    )
+    bound['delay'] /= uncoded['delay']
+
+    # R10_d11
+    # for lmr in lmrs:
+    #     lmr.decodingf = partial(complexity.r10_complexity, max_deg=11, reloverhead=1.02)
+    #     lmr.set_wait_for()
+    # r10d11 = droplets.simulate(
+    #     partial(delay.delay_mean, overhead=1.020148),
+    #     lmrs,
+    # )
+    # r10d11['delay'] /= uncoded['delay']
+
+    # R10_d0
+    # for lmr in lmrs:
+    #     lmr.decodingf = complexity.decoding0
+    #     lmr.set_wait_for()
+    # r10d0 = droplets.simulate(
+    #     partial(delay.delay_mean, overhead=1.020148),
+    #     lmrs,
+    # )
+    # r10d0['delay'] /= uncoded['delay']
+
     # LT
     for lmr in lmrs:
         lmr.decodingf = partial(complexity.lt_complexity, reloverhead=1.3)
@@ -712,20 +953,31 @@ def raptor_plot():
     )
     lt['delay'] /= uncoded['delay']
 
+    # print(np.absolute(1-r10['delay'] / lt['delay']))
+    # return
+
     # make plot
     plt.figure()
     plt.plot(r10['nservers'], r10['delay'], r10_plot_string, markevery=0.2, label='R10')
+    plt.plot(optimal['nservers'], optimal['delay'], '--', markevery=0.2, label='R10 sim. (opt.)')
+    plt.plot(rr['nservers'], rr['delay'], '--', markevery=0.2, label='R10 sim. (rr)')
+    # plt.plot(r10d11['nservers'], r10d11['delay'], r10d11_plot_string, markevery=0.2, label='R10d11')
     # plt.plot(rq['nservers'], rq['delay'], rq_plot_string, markevery=0.2, label='RQ')
     plt.plot(lt['nservers'], lt['delay'], lt_plot_string, markevery=0.2, label='LT')
+    plt.plot(bdc['nservers'], bdc['delay'], bdc_plot_string, markevery=0.2, label='BDC [6]')
     plt.plot(centralized['nservers'], centralized['delay'],
-             centralized_plot_string, markevery=0.2, label='R10, Centralized')
-    plt.grid()
-    plt.legend()
+             centralized_plot_string, markevery=0.2, label='R10 cent.')
+    plt.plot(clt['nservers'], clt['delay'],
+             '-', markevery=0.2, label='LT cent. [9]')
+    plt.plot(classical['nservers'], classical['delay'], classical_plot_string, markevery=0.2, label='Classical [4]')
+    plt.plot(bound['nservers'], bound['delay'], bound_plot_string, markevery=0.2, label='Ideal')
+    plt.grid(linestyle='--')
+    plt.legend(framealpha=1, labelspacing=0.1, columnspacing=0.1, ncol=1, loc='best')
     plt.ylabel('$D$')
     plt.xlabel('$K$')
     plt.xlim(0, 600)
-    plt.ylim(0.2, 0.6)
-    plt.savefig('./plots/istc18/workload_raptor_2.pdf', dpi='figure')
+    plt.ylim(0.2, 0.7)
+    plt.savefig('./plots/istc18/workload_raptor.pdf', dpi='figure', bbox_inches='tight')
     plt.show()
     return
 
@@ -783,16 +1035,73 @@ def plot_server_pdf():
 
     '''
     lmr = lmr1()
-    t = 100000
-    pdf_sim = droplets.server_pdf_empiric(t, lmr)
-    pdf_ana = droplets.server_pdf(t, lmr)
+    t = 100000000000
+    pdf_sim = delay.server_pdf_empiric(t, lmr)
+    pdf_ana = delay.server_pdf(t, lmr)
     plt.figure()
     plt.plot(pdf_sim, label='simulated')
     plt.plot(pdf_ana, label='analytic')
     plt.grid()
     plt.legend()
     plt.show()
+
+def error_plot():
+    '''Plot the error of the analytic expression.
+
+    '''
+    # lmr = get_parameters_workload()[-1]
+    lmr = lmr1()
+    lmr.decodingf = complexity.decoding0
+    lmr.set_wait_for()
+    t1 = delay.delay_estimate(10, lmr)
+    t2 = delay.delay_estimate(100000, lmr)
+    print(t1, t2)
+    t = np.linspace(t1, t2, 100, dtype=int)
+    simulated = np.fromiter(
+        (delay.drops_empiric(i, lmr, n=1000) for i in t),
+        dtype=float,
+    )
+    print(simulated)
+    analytic = np.fromiter(
+        (delay.drops_estimate(i, lmr) for i in t),
+        dtype=float,
+    )
+    print(analytic)
+    se = np.power(simulated-analytic, 2) / analytic
+    err = np.absolute(simulated-analytic) / analytic
+    plt.plot(t, err, label='error')
+
+    # erra = np.fromiter(
+    #     (delay.delay_estimate_error(i, lmr) for i in t),
+    #     dtype=float,
+    # )
+    # plt.plot(t, erra, label='analytic error')
+    # plt.plot(t, simulated, label='simulated')
+    # plt.plot(t, analytic, label='analytic')
+    plt.grid()
+    plt.legend()
+    plt.show()
     return
+
+    # uncoded = droplets.simulate(delay.delay_uncoded, lmrs)
+    for lmr in lmrs:
+        # lmr.decodingf = partial(complexity.r10_complexity, reloverhead=1.02)
+        lmr.decodingf = complexity.decoding0
+        lmr.set_wait_for()
+
+    simulated = droplets.simulate(
+        partial(delay.delay_mean_empiric, overhead=1.1, n=1000),
+        lmrs,
+    )
+    # simulated['delay'] /= uncoded['delay']
+    analytic = droplets.simulate(
+        partial(delay.delay_mean, overhead=1.1),
+        lmrs,
+    )
+    # analytic['delay'] /= uncoded['delay']
+
+
+
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
@@ -803,7 +1112,8 @@ if __name__ == '__main__':
     # dt = lmrs[0].asdtype()
     # plot_server_pdf()
     # plot_mean_delay()
-    straggling_plot()
+    # straggling_plot()
     # estimate_plot()
     # q_plot()
-    # raptor_plot()
+    raptor_plot()
+    # error_plot()
