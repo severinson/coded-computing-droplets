@@ -22,6 +22,68 @@ from scipy.stats import expon
 from scipy.optimize import minimize
 from numba import njit
 
+# arithmetic complexity
+WORD_SIZE = 8
+ADDITIONC = WORD_SIZE/64
+MULTIPLICATIONC = WORD_SIZE*math.log2(WORD_SIZE)
+
+# dtype containing system parameters
+lmr_dtype = np.dtype([
+    ('nrows', np.int64),
+    ('ncols', np.int64),
+    ('nvectors', np.int64),
+    ('nservers', np.int64),
+    ('ndroplets', np.int64),
+    ('wait_for', np.int64),
+    ('droplet_size', np.int64),
+    ('droplets_per_server', np.float64),
+    ('code_rate', np.float64),
+    ('straggling', np.float64),
+    ('dropletc', np.float64),
+    ('decodingc', np.float64),
+])
+
+def lmr_factory(nservers:int=None,
+                nrows:int=None,
+                ncols:int=None,
+                nvectors:int=None,
+                droplet_size:int=1,
+                ndroplets:int=None,
+                wait_for:int=None,
+                straggling_factor:int=0,
+                decodingf:callable=None):
+    '''Return an lmr_dtype object containing the given system parameters.
+
+    '''
+    droplets_per_server = ndroplets / nservers
+    a = (ncols - 1) * ADDITIONC
+    m = ncols * MULTIPLICATIONC
+    dropletc = (a+m)*droplet_size
+    ncrows = ndroplets * droplet_size
+    code_rate = nrows / ncrows
+    straggling = nrows*ncols*nvectors/nservers
+    straggling *= ADDITIONC + MULTIPLICATIONC
+    straggling *= straggling_factor
+    decodingc = 0 # computed after instantitation
+    result = np.array([(
+        nrows,
+        ncols,
+        nvectors,
+        nservers,
+        ndroplets,
+        wait_for,
+        droplet_size,
+        droplets_per_server,
+        code_rate,
+        straggling,
+        dropletc,
+        decodingc,
+    )], dtype=lmr_dtype)[0]
+    if decodingf is None:
+        raise ValueError('decodingf not set')
+    result['decodingc'] = decodingf(result) * nvectors/wait_for
+    return result
+
 class LMR(object):
     '''Liquid MapReduce parameter struct.
 
@@ -106,37 +168,6 @@ class LMR(object):
             'straggling_factor': self.straggling_factor,
         }
 
-    lmr_dtype = np.dtype([
-        ('nrows', np.int64),
-        ('ncols', np.int64),
-        ('nvectors', np.int64),
-        ('nservers', np.int64),
-        ('ndroplets', np.int64),
-        ('wait_for', np.int64),
-        ('droplet_size', np.int64),
-        ('droplets_per_server', np.float64),
-        ('code_rate', np.float64),
-        ('straggling', np.float64),
-        ('dropletc', np.float64),
-        ('decodingc', np.float64),
-    ])
-    def asdtype(self):
-        '''return representation as a numpy dtype'''
-        return np.array([(
-            self.nrows,
-            self.ncols,
-            self.nvectors,
-            self.nservers,
-            self.ndroplets,
-            self.wait_for,
-            self.droplet_size,
-            self.droplets_per_server,
-            self.code_rate,
-            self.straggling,
-            self.dropletc,
-            self.decodingc,
-        )], dtype=self.lmr_dtype)[0]
-
     def __repr__(self):
         return str(self.asdict())
 
@@ -185,6 +216,34 @@ def simulate(f, lmrs, cache=None, rerun=False):
         df.to_csv(cache+'.csv', index=False)
     return df
 
+def set_wait_for(lmr=None, overhead=None):
+    '''Set the optimal number of servers to wait for in-place.
+
+    '''
+    def f(q):
+        nonlocal lmr, overhead
+        lmr['wait_for'] = int(round(q[0]))
+        return delay.delay_mean(lmr, overhead=overhead)
+        # if q > lmr.nservers:
+        #     return q * 1e32
+        # if q < 1:
+        #     return -(q-2) * 1e32
+        # lmr.wait_for = int(math.floor(q))
+        # d1 = delay.delay_mean(lmr, overhead=overhead)
+        # lmr.wait_for = int(math.ceil(q))
+        # d2 = delay.delay_mean(lmr, overhead=overhead)
+        # result = d1 * (math.ceil(q)-q) + d2 * (q-math.floor(q))
+        # return result
+
+    result = minimize(
+        f,
+        x0=lmr['nservers']/2,
+        bounds=[(1, lmr['nservers'])],
+    )
+    wait_for = int(result.x.round())
+    lmr['wait_for'] = wait_for
+    return lmr
+
 def wait_for_optimal(overhead, lmr):
     '''Return the optimal number of servers to wait for.
 
@@ -219,32 +278,52 @@ import unittest
 class Tests(unittest.TestCase):
 
     def lmr1(self):
-        return LMR(
-            ndroplets=100,
+        return lmr_factory(
             nservers=100,
             nrows=100,
             ncols=100,
-            straggling_factor=100,
+            nvectors=100,
+            ndroplets=100,
+            wait_for=80,
+            straggling_factor=1,
+            decodingf=lambda x: 0,
         )
 
-    def test_estimates(self):
-        '''test that the drops/time estimates are each others inverse'''
+    def test_instantitation(self):
         lmr = self.lmr1()
-        t1 = 100000
-        d = drops_estimate(t1, lmr)
-        self.assertGreater(d, 0)
-        t2 = delay_estimate(d, lmr)
-        self.assertAlmostEqual(t1, t2)
+        print(lmr)
+        t = delay.delay_mean(lmr)
+        print(t)
+        # set_wait_for(lmr=lmr, overhead=1.02)
         return
 
-    def test_server_pdf(self):
-        '''test the analytic server pdf against simulations'''
-        lmr = self.lmr1()
-        t = 100
-        pdf_sim = server_pdf_empiric(t, lmr)
-        pdf_ana = server_pdf(t, lmr)
-        self.assertTrue(np.allclose(pdf_sim, pdf_ana, atol=0.01))
-        return
+    # def lmr1(self):
+    #     return LMR(
+    #         ndroplets=100,
+    #         nservers=100,
+    #         nrows=100,
+    #         ncols=100,
+    #         straggling_factor=100,
+    #     )
+
+    # def test_estimates(self):
+    #     '''test that the drops/time estimates are each others inverse'''
+    #     lmr = self.lmr1()
+    #     t1 = 100000
+    #     d = drops_estimate(t1, lmr)
+    #     self.assertGreater(d, 0)
+    #     t2 = delay_estimate(d, lmr)
+    #     self.assertAlmostEqual(t1, t2)
+    #     return
+
+    # def test_server_pdf(self):
+    #     '''test the analytic server pdf against simulations'''
+    #     lmr = self.lmr1()
+    #     t = 100
+    #     pdf_sim = server_pdf_empiric(t, lmr)
+    #     pdf_ana = server_pdf(t, lmr)
+    #     self.assertTrue(np.allclose(pdf_sim, pdf_ana, atol=0.01))
+    #     return
 
 if __name__ == '__main__':
     unittest.main()

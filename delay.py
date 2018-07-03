@@ -7,6 +7,7 @@ import random
 import numpy as np
 import pynumeric
 import stats
+import scipy.special.lambertw
 
 from scipy.special import lambertw
 from numba import jit, njit
@@ -172,28 +173,29 @@ def delay_mean_simulated(lmr, overhead=1.1, n=10, order='random'):
 
     return result/n + lmr.decodingc
 
-def delay_mean(lmr, overhead=1.1, d_tot=None):
+# @jit
+def delay_mean(lmr, overhead=1.0, d_tot=None):
     '''Return the mean delay of the map phase when d_tot droplets are
-    required in total. The returned value is an upper bound on the
-    true mean.
+    required in total. If d_tot is not given it's computed from the
+    overhead. The returned value is an upper bound on the true mean.
 
     '''
     if d_tot is None:
-        d_tot = lmr.nrows*lmr.nvectors/lmr.droplet_size*overhead
-    max_drops = lmr.droplets_per_server*lmr.nvectors
-    if max_drops * lmr.nservers < d_tot:
+        d_tot = lmr['nrows']*lmr['nvectors']/lmr['droplet_size']*overhead
+    max_drops = lmr['droplets_per_server']*lmr['nvectors']
+    if max_drops * lmr['nservers'] < d_tot:
         return math.inf
     t = delay_estimate(d_tot, lmr)
     result = t
     pdf = server_pdf(t, lmr)
-    for i in range(lmr.wait_for):
+    for i in range(lmr['wait_for']):
         rv = stats.ShiftexpOrder(
-            parameter=lmr.straggling,
-            total=lmr.nservers-i,
-            order=lmr.wait_for-i,
+            parameter=lmr['straggling'],
+            total=lmr['nservers']-i,
+            order=lmr['wait_for']-i,
         )
-        result += pdf[i] * (rv.mean() - lmr.straggling)
-    return result + lmr.decodingc
+        result += pdf[i] * (rv.mean() - lmr['straggling'])
+    return result + lmr['decodingc']
 
 def drops_estimate(t, lmr):
     '''Return an approximation of the number of droplets computed at time
@@ -246,20 +248,22 @@ def drops_empiric(t, lmr, n=100):
         ).sum()
     return result/n
 
+@jit
 def delay_estimate(d_tot, lmr):
     '''Return an approximation of the delay t at which d droplets have
     been computed in total over the K servers. The inverse of
     drops_estimate.
 
     '''
-    t = lmr.straggling + lmr.dropletc/2 + d_tot*lmr.dropletc/lmr.nservers
-    earg = (lmr.nservers+2*d_tot)*lmr.dropletc
-    earg /= -2*lmr.nservers*lmr.straggling
+    t = lmr['straggling'] + lmr['dropletc']/2 + d_tot*lmr['dropletc']/lmr['nservers']
+    earg = (lmr['nservers']+2*d_tot)*lmr['dropletc']
+    earg /= -2*lmr['nservers']*lmr['straggling']
     earg -= 1
     Warg = math.exp(earg)
-    Warg *= 2*lmr.straggling + lmr.dropletc
-    Warg /= -2*lmr.straggling
-    t += lmr.straggling * lambertw(Warg)
+    Warg *= 2*lmr['straggling'] + lmr['dropletc']
+    Warg /= -2*lmr['straggling']
+    t += lmr['straggling'] * lambertw(Warg)
+    # t += lmr.straggling * scipy.special.lambertw(Warg)
     return np.real(t)
 
 def delay_lower(d, lmr):
@@ -350,6 +354,7 @@ def server_pdf_empiric(t, lmr, n=100000):
     pdf /= n
     return pdf
 
+@jit
 def server_pdf(t, lmr):
     '''Return the PDF over the number of servers with a delay less than t,
     i.e., pdf[0] is the probability that exactly 0 servers have a
@@ -357,27 +362,27 @@ def server_pdf(t, lmr):
     delay at most t etc.
 
     '''
-    pdf = np.zeros(lmr.nservers+1)
+    pdf = np.zeros(lmr['nservers']+1)
     pdf[0] = 1-stats.ShiftexpOrder(
-        parameter=lmr.straggling,
+        parameter=lmr['straggling'],
         order=1,
-        total=lmr.nservers,
-    ).cdf(t+lmr.straggling)
-    for i in range(1, lmr.nservers+1):
+        total=lmr['nservers'],
+    ).cdf(t+lmr['straggling'])
+    for i in range(1, lmr['nservers']+1):
         rv1 = stats.ShiftexpOrder(
-            parameter=lmr.straggling,
+            parameter=lmr['straggling'],
             order=i,
-            total=lmr.nservers,
+            total=lmr['nservers'],
         )
-        if i < lmr.nservers:
+        if i < lmr['nservers']:
             rv2 = stats.ShiftexpOrder(
-                parameter=lmr.straggling,
+                parameter=lmr['straggling'],
                 order=i+1,
-                total=lmr.nservers,
+                total=lmr['nservers'],
             )
-            pdf[i] = rv1.cdf(t+lmr.straggling)
-            pdf[i] -= rv2.cdf(t+lmr.straggling)
+            pdf[i] = rv1.cdf(t+lmr['straggling'])
+            pdf[i] -= rv2.cdf(t+lmr['straggling'])
         else:
-            pdf[i] = rv1.cdf(t+lmr.straggling)
+            pdf[i] = rv1.cdf(t+lmr['straggling'])
 
     return pdf
