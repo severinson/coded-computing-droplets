@@ -9,6 +9,7 @@ import droplets
 import delay
 import complexity
 
+from matplotlib2tikz import save as tikz_save
 from functools import partial
 from scipy.stats import expon
 from scipy.special import lambertw
@@ -83,128 +84,6 @@ def plot_cdf(num_droplets=2000):
     plt.legend()
     # plt.show()
     return
-
-def drops_simulation(t, n=100):
-    result = 0
-    for _ in range(n):
-        a = get_delay(t)
-        tmp = np.floor((t-a)/complexity)
-        if len(tmp) == 0:
-            continue
-        assert tmp.min() >= 0
-        result += tmp.sum()
-
-    return result/n
-
-def time_estimate_K1(d):
-    '''Return an approximation of the time t at which d droplets have been
-    computed. The inverse of drops_estimate.
-
-    '''
-    t = straggling_parameter + complexity/2 + d*complexity
-    earg = 2*straggling_parameter
-    earg += complexity + 2*d*complexity
-    earg /= -2*straggling_parameter
-    Warg = math.exp(earg)
-    Warg *= -2*straggling_parameter - complexity
-    Warg /= 2*straggling_parameter
-    t += straggling_parameter * lambertw(Warg)
-    return t
-
-def test_estimates(t1=1000):
-    d = drops_estimate(t1)
-    t2 = time_estimate(d)
-    print(t1, t2, d)
-    return
-
-def bound4(t):
-    bf = lambda x: math.floor((t-x) / complexity)
-    f = lambda x: expon.pdf(x, scale=straggling_parameter)*bf(x)
-    v, _ = integrate.quad(f, 0, t)
-    ub = num_servers * v
-    lb = max(ub-num_servers+1, 0)
-    return lb, ub
-
-def bound3(t):
-    '''Return a lower and upper bound on the average number of droplets
-    computed at time t.
-
-    '''
-    pdf = server_pdf(t)
-    ubt = 0
-    lbt = 0
-    for i in range(num_servers):
-        norm = expon.cdf(t, scale=straggling_parameter)
-        v = 1/straggling_parameter*t
-        v += math.exp(-1/straggling_parameter*t) - 1
-        v *= straggling_parameter
-        v /= norm * complexity
-        ub = v*(i+1)
-        # lb = max(ub-i+1, 0)
-        lb = ub-i+1
-        ubt += pdf[i] * ub
-        lbt += pdf[i] * lb
-    return lbt, ubt
-
-def bound2(t):
-    '''Return a lower and upper bound on the average number of droplets
-    computed at time t.
-
-    '''
-    pdf = server_pdf(t)
-    ubt = 0
-    lbt = 0
-    bf = lambda x: (t-x) / complexity
-    for i in range(num_servers):
-        norm = expon.cdf(t, scale=straggling_parameter)
-        f = lambda x: expon.pdf(x, scale=straggling_parameter)/norm*bf(x)
-        if norm < np.finfo(float).tiny:
-            continue
-        v, _ = integrate.quad(f, 0, t)
-        # ub = math.floor(v)*(i+1)
-        ub = v*(i+1)
-        lb = max(ub-i+1, 0)
-        ubt += pdf[i] * ub
-        lbt += pdf[i] * lb
-    return lbt, ubt
-
-def bound(t):
-    '''Return a lower and upper bound on the average number of droplets
-    computed at time t.
-
-    '''
-    pdf = server_pdf(t)
-    ubt = 0
-    lbt = 0
-    # print()
-    for i in range(num_servers):
-        rv = stats.ExpSum(
-            scale=straggling_parameter,
-            order=i+1,
-        )
-        norm = rv.cdf((i+1)*t)
-        # s = integrate.quad(lambda x: rv.pdf(x)/norm, 0, (i+1)*t)
-        # print('sum={}, norm={}'.format(s, norm))
-        if norm < np.finfo(float).tiny:
-            continue
-
-        # bf = lambda x: ((i+1)*t-x)/complexity
-        # p, _ = integrate.quad(rv.pdf, 0, straggling_parameter)
-        # print(p, )
-        # ub, _ = integrate.quad(
-        #     lambda x: rv.pdf(x)/norm * bf(x),
-        #     0,
-        #     (i+1)*t,
-        # )
-        ub = 0
-        if t > straggling_parameter:
-            ub += (i+1)*(t - straggling_parameter)/complexity
-
-        lb = max(ub-i+1, 0)
-        ubt += pdf[i] * ub
-        lbt += pdf[i] * lb
-
-    return lbt, ubt
 
 def drops_cdf():
     t = np.linspace(1, 10*max(straggling_parameter, complexity), 100)
@@ -446,7 +325,6 @@ def find_parameters_2(nservers, C=1e4, code_rate=1/3, tol=0.02,
     # droplet_size = round(nrows / code_rate / nservers / droplets_per_server)
 
     nrows = ndroplets * code_rate * droplet_size
-    # nvectors = round(nrows/ratio / nservers) * nservers
     nvectors = 10*nservers
     ncols = round(nrows/ratio)
     nrows = round(nrows)
@@ -474,11 +352,6 @@ def get_parameters_straggling():
     l = list()
     nservers = 625
     for i in np.linspace(1, 5, 20):
-        # lmr = find_parameters(
-        #     nservers=nservers,
-        #     C=C_target,
-        #     straggling_factor=i,
-        # )
         lmr = find_parameters_2(
             nservers, C=C_target,
             straggling_factor=i,
@@ -571,6 +444,7 @@ def straggling_plot():
         partial(delay.delay_mean, overhead=1.0),
         lmrs,
     )
+
     bound['delay'] /= uncoded['delay']
 
     # centralized
@@ -594,14 +468,14 @@ def straggling_plot():
     clt['delay'] /= uncoded['delay']
 
     # RQ
-    for lmr in lmrs:
-        lmr.decodingf = partial(complexity.rq_complexity, reloverhead=1.02)
-        lmr.set_wait_for()
-    rq = droplets.simulate(
-        partial(delay.delay_mean, overhead=1.02),
-        lmrs,
-    )
-    rq['delay'] /= uncoded['delay']
+    # for lmr in lmrs:
+    #     lmr.decodingf = partial(complexity.rq_complexity, reloverhead=1.02)
+    #     lmr.set_wait_for()
+    # rq = droplets.simulate(
+    #     partial(delay.delay_mean, overhead=1.02),
+    #     lmrs,
+    # )
+    # rq['delay'] /= uncoded['delay']
 
     # R10
     for lmr in lmrs:
@@ -635,18 +509,31 @@ def straggling_plot():
 
     # make plot
     plt.figure()
-    plt.plot(r10['straggling_factor'], r10['delay'], r10_plot_string, markevery=0.2, label='R10')
+    plt.plot(
+        r10['straggling_factor'], r10['delay'],
+        r10_plot_string, markevery=0.2,
+        markerfacecolor='none', markeredgewidth=1.0, label='R10')
     # plt.plot(r10d11['straggling_factor'], r10d11['delay'], r10d11_plot_string, markevery=0.2, label='R10d11')
-    plt.plot(rq['straggling_factor'], rq['delay'], rq_plot_string, markevery=0.2, label='RQ')
-    plt.plot(lt['straggling_factor'], lt['delay'], lt_plot_string, markevery=0.2, label='LT')
-    plt.plot(bdc['straggling_factor'], bdc['delay'], bdc_plot_string, markevery=0.2, label='BDC [6]')
-    plt.plot(centralized['straggling_factor'], centralized['delay'],
-             centralized_plot_string, markevery=0.2, label='R10 cent.')
+    # plt.plot(rq['straggling_factor'], rq['delay'], rq_plot_string, markevery=0.2, label='RQ')
+    plt.plot(
+        lt['straggling_factor'], lt['delay'], lt_plot_string, markevery=0.3,
+        markerfacecolor='none', markeredgewidth=1.0, label='LT')
+    plt.plot(
+        bdc['straggling_factor'], bdc['delay'], bdc_plot_string, markevery=0.25,
+        label='BDC [6]')
+    plt.plot(
+        centralized['straggling_factor'], centralized['delay'],
+        centralized_plot_string, markevery=0.2,
+        markerfacecolor='none', markeredgewidth=1.0, label='R10 cent.')
     # plt.plot(clt['straggling_factor'], clt['delay'],
     #          '-', markevery=0.2, label='LT cent. [9]')
-    plt.plot(classical['straggling_factor'], classical['delay'],
-             classical_plot_string, markevery=0.2, label='Classical [4]')
-    plt.plot(bound['straggling_factor'], bound['delay'], bound_plot_string, markevery=0.2, label='Ideal')
+    plt.plot(
+        classical['straggling_factor'], classical['delay'],
+        classical_plot_string, markevery=0.2,
+        markerfacecolor='none', markeredgewidth=1.0, label='Classical [4]')
+    plt.plot(
+        bound['straggling_factor'], bound['delay'], bound_plot_string, markevery=0.2,
+        markerfacecolor='none', markeredgewidth=1.0, label='Ideal')
 
     # random = droplets.simulate(delay.delay_mean_random, lmrs)
     # random['delay'] /= uncoded['delay']
@@ -671,8 +558,13 @@ def straggling_plot():
     plt.ylabel(r'$D$')
     plt.xlabel(r'$\beta/\sigma_{\mathsf{K}}$')
     plt.xlim(1, 5)
-    plt.ylim(0, 2)
+    plt.ylim(0, 1.6)
     plt.legend(framealpha=1, labelspacing=0.1, columnspacing=0.1, ncol=1, loc='best')
+    tikz_save(
+        './plots/istc18/straggling.tex',
+        figureheight='\\figureheight',
+        figurewidth='\\figurewidth',
+    )
     plt.savefig('./plots/istc18/straggling.pdf', dpi='figure', bbox_inches='tight')
     plt.show()
     return
@@ -736,11 +628,31 @@ def estimate_plot():
     plt.show()
     return
 
+def bounds_plot():
+    lmr = lmr1()
+    d1 = 1
+    d2 = 1000
+    d = np.linspace(d1, d2, dtype=int)
+    avg = [delay.delay_estimate(x, lmr) for x in d]
+    lower = [delay.delay_lower(x, lmr) for x in d]
+    upper = [delay.delay_upper(x, lmr) for x in d]
+    lower2 = [delay.delay_lower2(x, lmr) for x in d]
+    upper2 = [delay.delay_upper2(x, lmr) for x in d]
+    plt.plot(d, avg, label='avg.')
+    plt.plot(d, lower, label='lower')
+    plt.plot(d, upper, label='upper')
+    plt.plot(d, lower2, label='lower2')
+    plt.plot(d, upper2, label='upper2')
+    plt.grid()
+    plt.legend()
+    plt.show()
+    return
+
 r10_plot_string = 'b-o'
 r10d11_plot_string = 'g-v'
 rq_plot_string = 'g-^'
 lt_plot_string = 'm-d'
-bdc_plot_string = 'c-*'
+bdc_plot_string = 'c-^'
 centralized_plot_string = 'r-s'
 bound_plot_string = 'k-'
 classical_plot_string = 'g:'
@@ -958,18 +870,29 @@ def raptor_plot():
 
     # make plot
     plt.figure()
-    plt.plot(r10['nservers'], r10['delay'], r10_plot_string, markevery=0.2, label='R10')
-    plt.plot(optimal['nservers'], optimal['delay'], '--', markevery=0.2, label='R10 sim. (opt.)')
-    plt.plot(rr['nservers'], rr['delay'], '--', markevery=0.2, label='R10 sim. (rr)')
+    plt.plot(
+        r10['nservers'], r10['delay'], r10_plot_string, markevery=0.2,
+        markerfacecolor='none', markeredgewidth=1.0, label='R10')
+    plt.plot(optimal['nservers'], optimal['delay'], '-v', markevery=0.2, label='R10 sim. (opt.)')
+    plt.plot(
+        rr['nservers'], rr['delay'], '--', markevery=0.2,
+        markerfacecolor='none', markeredgewidth=1.0, label='R10 sim. (rr)')
     # plt.plot(r10d11['nservers'], r10d11['delay'], r10d11_plot_string, markevery=0.2, label='R10d11')
     # plt.plot(rq['nservers'], rq['delay'], rq_plot_string, markevery=0.2, label='RQ')
-    plt.plot(lt['nservers'], lt['delay'], lt_plot_string, markevery=0.2, label='LT')
-    plt.plot(bdc['nservers'], bdc['delay'], bdc_plot_string, markevery=0.2, label='BDC [6]')
-    plt.plot(centralized['nservers'], centralized['delay'],
-             centralized_plot_string, markevery=0.2, label='R10 cent.')
-    plt.plot(clt['nservers'], clt['delay'],
-             '-', markevery=0.2, label='LT cent. [9]')
-    plt.plot(classical['nservers'], classical['delay'], classical_plot_string, markevery=0.2, label='Classical [4]')
+    plt.plot(
+        lt['nservers'], lt['delay'], lt_plot_string, markevery=0.2,
+        markerfacecolor='none', markeredgewidth=1.0, label='LT')
+    plt.plot(bdc['nservers'], bdc['delay'], bdc_plot_string, markevery=0.2,
+             label='BDC [6]')
+    plt.plot(
+        centralized['nservers'], centralized['delay'],
+        centralized_plot_string, markevery=0.2,
+        markerfacecolor='none', markeredgewidth=1.0, label='R10 cent.')
+    # plt.plot(clt['nservers'], clt['delay'],
+    #          '-', markevery=0.2, label='LT cent. [9]')
+    plt.plot(
+        classical['nservers'], classical['delay'], classical_plot_string, markevery=0.2,
+        markerfacecolor='none', markeredgewidth=1.0, label='Classical [4]')
     plt.plot(bound['nservers'], bound['delay'], bound_plot_string, markevery=0.2, label='Ideal')
     plt.grid(linestyle='--')
     plt.legend(framealpha=1, labelspacing=0.1, columnspacing=0.1, ncol=1, loc='best')
@@ -977,7 +900,12 @@ def raptor_plot():
     plt.xlabel('$K$')
     plt.xlim(0, 600)
     plt.ylim(0.2, 0.7)
-    plt.savefig('./plots/istc18/workload_raptor.pdf', dpi='figure', bbox_inches='tight')
+    tikz_save(
+        './plots/istc18/workload.tex',
+        figureheight='\\figureheight',
+        figurewidth='\\figurewidth',
+    )
+    plt.savefig('./plots/istc18/workload.pdf', dpi='figure', bbox_inches='tight')
     plt.show()
     return
 
@@ -1100,20 +1028,73 @@ def error_plot():
     )
     # analytic['delay'] /= uncoded['delay']
 
+def droplets_plot():
+    lmr = lmr1()
+    t1 = delay.delay_estimate(1, lmr)
+    t2 = delay.delay_estimate(1000, lmr)
+    t = np.linspace(t1, t2, dtype=int)
+    emp = [delay.drops_empiric(x, lmr, n=10000) for x in t]
+    avg = [delay.drops_estimate(x, lmr) for x in t]
+    lower = [delay.drops_lower(x, lmr) for x in t]
+    upper = [delay.drops_upper(x, lmr) for x in t]
+    plt.figure()
+    plt.plot(t, emp, label='emp.')
+    plt.plot(t, avg, label='avg.')
+    plt.plot(t, lower, label='lower')
+    plt.plot(t, upper, label='upper')
+    plt.grid()
+    plt.xlim(0, 1e9)
+    plt.ylim(0, 1e3)
+    plt.xlabel('time')
+    plt.ylabel('droplets')
+    plt.legend()
+    plt.savefig('./plots/istc18/bounds.png', dpi='figure', bbox_inches='tight')
+    plt.show()
+    return
 
+def linearity_plot():
+    lmr_t = lmr1()
+    lmr_c = lmr1()
+    tt = delay.delay_estimate(1, lmr_t)
+    tc = delay.delay_estimate(1, lmr_c)
+    time = list()
+    capacity = list()
+    for x in range(11):
+        time.append(delay.drops_estimate(tt, lmr_t))
+        capacity.append(delay.drops_estimate(tc, lmr_c))
+        tt *= 2
+        lmr_c.nservers *= 2
 
+    time = np.fromiter(time, dtype=float)
+    capacity = np.fromiter(capacity, dtype=float)
+    print(((time-capacity)/time).mean())
+    plt.figure()
+    plt.semilogy(time, '-s', markevery=0.2, label='time')
+    plt.semilogy(capacity, '--o', markevery=0.25, label='servers')
+    plt.xlabel('num. times K and t is doubled')
+    plt.ylabel('num. droplets')
+    plt.ylim(1, 1e6)
+    plt.xlim(0, 10)
+    plt.grid()
+    plt.legend()
+    plt.savefig('./plots/istc18/linearity.png', dpi='figure', bbox_inches='tight')
+    plt.show()
+    return
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
     # [print(lmr) for lmr in get_parameters_straggling()]
-    # [print(round(lmr.nrows/lmr.droplet_size)) for lmr in get_parameters_workload()]
+    # [print(round(lmr.nrows/lmr.droplet_size)) for lmr in get_parameters_straggling()]
     # [print(lmr) for lmr in get_parameters_workload()]
     # lmrs = get_parameters_workload()
     # dt = lmrs[0].asdtype()
     # plot_server_pdf()
     # plot_mean_delay()
-    # straggling_plot()
+    # droplets_plot()
+    # bounds_plot()
+    straggling_plot()
     # estimate_plot()
     # q_plot()
-    raptor_plot()
+    # raptor_plot()
     # error_plot()
+    # linearity_plot()
