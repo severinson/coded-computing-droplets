@@ -85,26 +85,6 @@ class LMR(object):
         self.wait_for = wait_for_optimal(1.1, self)
         return
 
-    # @classmethod
-    # def init2(cls, nrows:int=None, ncols:int=None, nvectors:int=None,
-    #           nservers:int=None, code_rate=None,
-    #           droplets_per_server:int=1, straggling_factor:int=0,
-    #           decodingf:callable=None):
-    #     ndroplets = droplets_per_server*nservers
-    #     droplet_size = nrows / code_rate / nservers / droplets_per_server
-    #     if droplet_size % 1 != 0:
-    #         raise ValueError('droplet_size must be an integer')
-    #     return cls(
-    #         nrows=nrows,
-    #         ncols=ncols,
-    #         nvectors=nvectors,
-    #         nservers=nservers,
-    #         straggling_factor=straggling_factor,
-    #         decodingf=decodingf,
-    #         ndroplets=ndroplets,
-    #         droplet_size=droplet_size,
-    #     )
-
     def workload(self):
         '''Return the number of additions/multiplications computed by each
         server
@@ -234,25 +214,6 @@ def wait_for_optimal(overhead, lmr):
     wait_for = int(result.x.round())
     lmr.wait_for = wait_for_orig
     return wait_for
-
-# def wait_for_heuristic(overhead, lmr):
-#     '''Heuristic for choosing the number of servers to wait for. Chooses
-#     wait_for to be the number of servers that are available on average
-#     when all droplets have been computed.
-
-#     '''
-#     # return int(round(lmr.nservers*lmr.code_rate))
-#     min_wait_for = d_tot / (lmr.droplets_per_server*lmr.nvectors)
-#     t = delay.delay_estimate(d_tot, lmr)
-#     pdf = delay.server_pdf(t, lmr)
-#     cdf = np.cumsum(pdf)
-#     wait_for = pynumeric.numinv(lambda i: cdf[i], target=0.1, upper=len(cdf)-1)
-#     # f = lambda q: integrate.trapz(pdf[:q]*np.arange(lmr.nservers+1))
-#     # wait_for = i
-#     wait_for = int(round(wait_for))
-#     wait_for = min(max(wait_for, 1), lmr.nservers)
-#     # print('wait_for', wait_for, 'nservers', lmr.nservers)
-#     return wait_for
 
 import unittest
 class Tests(unittest.TestCase):
