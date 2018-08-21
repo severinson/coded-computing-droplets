@@ -2,8 +2,6 @@
 
 - Load simulation
 - Mean delay should be such that each server has d droplets. This makes more sense.
-- DONE: Mean delay assuming perfect knowledge and infinite available computations.
-- DONE: Need mean delay assuming limited number of droplets at each server.
 - Mean delay assuming randomly selected computations.
 
 '''
@@ -16,73 +14,12 @@ import scipy.integrate as integrate
 import pynumeric
 import stats
 import delay
+import typedefs
 
 from multiprocessing import Pool
 from scipy.stats import expon
 from scipy.optimize import minimize
 from numba import njit
-
-# arithmetic complexity
-WORD_SIZE = 8
-ADDITIONC = WORD_SIZE/64
-MULTIPLICATIONC = WORD_SIZE*math.log2(WORD_SIZE)
-
-# dtype containing system parameters
-lmr_dtype = np.dtype([
-    ('nrows', np.int64),
-    ('ncols', np.int64),
-    ('nvectors', np.int64),
-    ('nservers', np.int64),
-    ('ndroplets', np.int64),
-    ('wait_for', np.int64),
-    ('droplet_size', np.int64),
-    ('droplets_per_server', np.float64),
-    ('code_rate', np.float64),
-    ('straggling', np.float64),
-    ('dropletc', np.float64),
-    ('decodingc', np.float64),
-])
-
-def lmr_factory(nservers:int=None,
-                nrows:int=None,
-                ncols:int=None,
-                nvectors:int=None,
-                droplet_size:int=1,
-                ndroplets:int=None,
-                wait_for:int=None,
-                straggling_factor:int=0,
-                decodingf:callable=None):
-    '''Return an lmr_dtype object containing the given system parameters.
-
-    '''
-    droplets_per_server = ndroplets / nservers
-    a = (ncols - 1) * ADDITIONC
-    m = ncols * MULTIPLICATIONC
-    dropletc = (a+m)*droplet_size
-    ncrows = ndroplets * droplet_size
-    code_rate = nrows / ncrows
-    straggling = nrows*ncols*nvectors/nservers
-    straggling *= ADDITIONC + MULTIPLICATIONC
-    straggling *= straggling_factor
-    decodingc = 0 # computed after instantitation
-    result = np.array([(
-        nrows,
-        ncols,
-        nvectors,
-        nservers,
-        ndroplets,
-        wait_for,
-        droplet_size,
-        droplets_per_server,
-        code_rate,
-        straggling,
-        dropletc,
-        decodingc,
-    )], dtype=lmr_dtype)[0]
-    if decodingf is None:
-        raise ValueError('decodingf not set')
-    result['decodingc'] = decodingf(result) * nvectors/wait_for
-    return result
 
 class LMR(object):
     '''Liquid MapReduce parameter struct.
@@ -210,7 +147,8 @@ def simulate(f, lmrs, cache=None, rerun=False):
         except:
             pass
     logging.info('simulating {} lmrs'.format(len(lmrs)))
-    df = pd.DataFrame([lmr.asdict() for lmr in lmrs])
+    # df = pd.DataFrame([lmr.asdict() for lmr in lmrs])
+    df = pd.DataFrame([typedefs.dct_from_lmr(lmr) for lmr in lmrs])
     df['delay'] = pool.map(f, lmrs)
     if isinstance(cache, str):
         df.to_csv(cache+'.csv', index=False)
@@ -289,14 +227,6 @@ class Tests(unittest.TestCase):
             decodingf=lambda x: 0,
         )
 
-    def test_instantitation(self):
-        lmr = self.lmr1()
-        print(lmr)
-        t = delay.delay_mean(lmr)
-        print(t)
-        # set_wait_for(lmr=lmr, overhead=1.02)
-        return
-
     # def lmr1(self):
     #     return LMR(
     #         ndroplets=100,
@@ -314,15 +244,6 @@ class Tests(unittest.TestCase):
     #     self.assertGreater(d, 0)
     #     t2 = delay_estimate(d, lmr)
     #     self.assertAlmostEqual(t1, t2)
-    #     return
-
-    # def test_server_pdf(self):
-    #     '''test the analytic server pdf against simulations'''
-    #     lmr = self.lmr1()
-    #     t = 100
-    #     pdf_sim = server_pdf_empiric(t, lmr)
-    #     pdf_ana = server_pdf(t, lmr)
-    #     self.assertTrue(np.allclose(pdf_sim, pdf_ana, atol=0.01))
     #     return
 
 if __name__ == '__main__':
