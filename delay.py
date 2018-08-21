@@ -8,45 +8,48 @@ import numpy as np
 import pynumeric
 import stats
 import scipy.special.lambertw
+import typedefs
+import complexity
 
 from scipy.special import lambertw
-from numba import jit, njit
+from numba import jit, njit, prange
 
 def delay_uncoded(lmr):
     '''Return the delay of the uncoded system.
 
     '''
-    rows_per_server = lmr.nrows/lmr.nservers
-    result = rows_per_server*(lmr.ncols-1)*lmr.ADDITIONC
-    result += rows_per_server*lmr.ncols*lmr.MULTIPLICATIONC
-    result *= lmr.nvectors
+    rows_per_server = lmr['nrows']/lmr['nservers']
+    result = rows_per_server*(lmr['ncols']-1)*complexity.ADDITIONC
+    result += rows_per_server*lmr['ncols']*complexity.MULTIPLICATIONC
+    result *= lmr['nvectors']
     result += stats.ShiftexpOrder(
-        parameter=lmr.straggling,
-        total=lmr.nservers,
-        order=lmr.nservers,
+        parameter=lmr['straggling'],
+        total=lmr['nservers'],
+        order=lmr['nservers'],
     ).mean()
     return result
 
+@njit
 def delay_classical(lmr):
     '''Return the delay of the classical scheme of Lee based on MDS codes
     and no partial computations.
 
     '''
     # delay due to the computation
-    rows_per_server = lmr.nrows/lmr.nservers/lmr.code_rate
-    result = rows_per_server*(lmr.ncols-1)*lmr.ADDITIONC
-    result += rows_per_server*lmr.ncols*lmr.MULTIPLICATIONC
-    result *= lmr.nvectors
+    rows_per_server = lmr['nrows']/lmr['nservers']/lmr['code_rate']
+    result = rows_per_server*(lmr['ncols']-1)*complexity.ADDITIONC
+    result += rows_per_server*lmr['ncols']*complexity.MULTIPLICATIONC
+    result *= lmr['nvectors']
 
     # delay due to waiting for the q-th server
-    result += stats.ShiftexpOrder(
-        parameter=lmr.straggling,
-        total=lmr.nservers,
-        order=lmr.wait_for,
-    ).mean()
+    result += stats.order_mean_shiftexp(
+        parameter=lmr['straggling'],
+        total=lmr['nservers'],
+        order=lmr['wait_for'],
+    )
 
     # delay due to decoding
-    result += lmr.decodingc
+    result += lmr['decodingc']
 
     return result
 
@@ -109,18 +112,21 @@ def arg_from_order(droplet_order, nvectors, d):
         i += 1
     return i
 
-def delay_mean_simulated(lmr, overhead=1.1, n=10, order='random'):
+RANDOM = 0
+ROUND_ROBIN = 1
+@njit
+def delay_mean_simulated(lmr, overhead=1.1, n=10, order=ROUND_ROBIN):
     '''Return the simulated mean delay of the map phase.
 
     Assumes that the map phase ends whenever a total of d droplets
     have been computed and the slowest server is available. Which
     droplet to compute is chosen randomly.
 
-    order: strategy for choosing the optimal droplet order. must be
-    either 'random' or 'heuristic'.
+    order: strategy for choosing the optimal droplet order. 0 for
+    random order and 1 for round-robin order.
 
     '''
-    assert order in ['random', 'heuristic']
+    assert order in [0, 1]
     d_tot = lmr.nrows*lmr.nvectors/lmr.droplet_size*overhead
     max_drops = lmr.droplets_per_server*lmr.nvectors
     if max_drops * lmr.nservers < d_tot:
@@ -128,32 +134,32 @@ def delay_mean_simulated(lmr, overhead=1.1, n=10, order='random'):
 
     result = 0
     nsamples = int(math.ceil(lmr.nservers*max_drops))
-    droplet_order = np.zeros(nsamples, dtype=int)
+    droplet_order = np.zeros(nsamples, dtype=np.int64)
     t = np.zeros(nsamples)
     dropletc = lmr.dropletc # cache this value
     v = np.zeros(lmr.nvectors)
     v[:] = np.arange(lmr.nvectors)
-    server_droplet_order = np.tile( # this is the heuristic order
-        np.arange(lmr.nvectors),
-        int(lmr.droplets_per_server),
+    server_droplet_order = np.zeros(
+        int(lmr.nvectors*lmr.droplets_per_server),
+        dtype=np.int64,
     )
+    for i in range(lmr.droplets_per_server):
+        server_droplet_order[i*lmr.nvectors:(i+1)*lmr.nvectors] = v
+
     for k in range(n):
-        a = delays(None, lmr)
+        a = delays(0, lmr)
         assert len(a) == lmr.nservers
-        print('simulating order={} {}/{}'.format(order, k, n))
         for i in range(lmr.nservers):
-            if order == 'random':
+            if order == RANDOM:
                 np.random.shuffle(server_droplet_order)
-            elif order == 'heuristic':
+            elif order == ROUND_ROBIN:
                 j = random.randint(0, len(v))
-                # j = i % lmr.nvectors
                 v[:j] = np.arange(len(v)-j, len(v))
                 v[j:] = np.arange(len(v)-j)
-                # np.random.shuffle(v)
-                server_droplet_order[:] = np.tile(v, int(lmr.droplets_per_server))
-                # server_droplet_order[:j], server_droplet_order[j:] = server_droplet_order[-j-1:], server_droplet_order[:-j-1]
+                for j in range(lmr.droplets_per_server):
+                    server_droplet_order[j*lmr.nvectors:(j+1)*lmr.nvectors] = v
             else:
-                raise ValueError('order must be random or heuristic')
+                raise ValueError('order must be 0 (random) or 1 (round-robin)')
             j1 = int(i*lmr.nvectors*lmr.droplets_per_server)
             j2 = int((i+1)*lmr.nvectors*lmr.droplets_per_server)
             droplet_order[j1:j2] = server_droplet_order[:]
@@ -166,21 +172,23 @@ def delay_mean_simulated(lmr, overhead=1.1, n=10, order='random'):
         t = t[p]
         i = arg_from_order(droplet_order, lmr.nvectors, d_tot/lmr.nvectors)
         if i >= len(t):
+            print('return inf 2')
             return math.inf
         t_droplets = t[i]
         t_servers = a[lmr.wait_for-1] # a is sorted
         result += max(t_servers, t_droplets)
+        print(k, '/', n, 'simulations done')
 
     return result/n + lmr.decodingc
 
 # @jit
-def delay_mean(lmr, overhead=1.0, d_tot=None):
+def delay_mean(lmr, overhead=1.0, d_tot=0):
     '''Return the mean delay of the map phase when d_tot droplets are
-    required in total. If d_tot is not given it's computed from the
+    required in total. If d_tot is zero it's computed from the
     overhead. The returned value is an upper bound on the true mean.
 
     '''
-    if d_tot is None:
+    if d_tot == 0:
         d_tot = lmr['nrows']*lmr['nvectors']/lmr['droplet_size']*overhead
     max_drops = lmr['droplets_per_server']*lmr['nvectors']
     if max_drops * lmr['nservers'] < d_tot:
@@ -197,7 +205,7 @@ def delay_mean(lmr, overhead=1.0, d_tot=None):
         result += pdf[i] * (rv.mean() - lmr['straggling'])
     return result + lmr['decodingc']
 
-def drops_estimate(t, lmr):
+def drops_estimate(t, lmr=None):
     '''Return an approximation of the number of droplets computed at time
     t. The inverse of time_estimate.
 
@@ -248,7 +256,7 @@ def drops_empiric(t, lmr, n=100):
         ).sum()
     return result/n
 
-@jit
+@jit(forceobj=True)
 def delay_estimate(d_tot, lmr):
     '''Return an approximation of the delay t at which d droplets have
     been computed in total over the K servers. The inverse of
@@ -263,7 +271,6 @@ def delay_estimate(d_tot, lmr):
     Warg *= 2*lmr['straggling'] + lmr['dropletc']
     Warg /= -2*lmr['straggling']
     t += lmr['straggling'] * lambertw(Warg)
-    # t += lmr.straggling * scipy.special.lambertw(Warg)
     return np.real(t)
 
 def delay_lower(d, lmr):
@@ -328,33 +335,36 @@ def delay_estimate_error(t, lmr):
     '''
     return lmr.nservers * (1-math.exp(-t/lmr.straggling))/2
 
-def delays(t, lmr):
-    '''Return an array of length <= nservers with simulated delays <= t.
+@njit
+def delays(t, lmr, out=None):
+    '''Return an array of length <= nservers with simulated delays <=
+    t. if t=0, all delays are kept.
 
     '''
-    a = np.random.exponential(
-        scale=lmr.straggling,
-        size=lmr.nservers,
-    )
-    a.sort()
-    if t:
-        i = np.searchsorted(a, t)
-        a = a[:i]
-    return a
+    if out is None:
+        out = np.zeros(lmr['nservers'])
+    for i in prange(lmr['nservers']):
+        out[i] = np.random.exponential(scale=lmr['straggling'])
+    out.sort()
+    if t > 0:
+        i = np.searchsorted(out, t)
+        out = out[:i]
+    return out
 
+@njit
 def server_pdf_empiric(t, lmr, n=100000):
-    '''Return the PDF over the number of servers with a delay <= t.
-    Computed via simulations.
+    '''Return the simulated PDF over the number of servers with a delay of
+    at most t.
 
     '''
-    pdf = np.zeros(lmr.nservers+1)
-    for _ in range(n):
+    pdf = np.zeros(lmr['nservers']+1)
+    for _ in prange(n):
         i = len(delays(t, lmr))
         pdf[i] += 1
     pdf /= n
     return pdf
 
-@jit
+@jit(forceobj=True)
 def server_pdf(t, lmr):
     '''Return the PDF over the number of servers with a delay less than t,
     i.e., pdf[0] is the probability that exactly 0 servers have a
@@ -362,27 +372,31 @@ def server_pdf(t, lmr):
     delay at most t etc.
 
     '''
-    pdf = np.zeros(lmr['nservers']+1)
-    pdf[0] = 1-stats.ShiftexpOrder(
-        parameter=lmr['straggling'],
-        order=1,
+    pdf = np.zeros(lmr['nservers']+1, dtype=np.float64)
+    pdf[0] = 1-stats.order_cdf_shiftexp(
+        t+lmr['straggling'],
         total=lmr['nservers'],
-    ).cdf(t+lmr['straggling'])
-    for i in range(1, lmr['nservers']+1):
-        rv1 = stats.ShiftexpOrder(
-            parameter=lmr['straggling'],
-            order=i,
+        order=1,
+        parameter=lmr['straggling'],
+    )
+    pdf[lmr['nservers']] = stats.order_cdf_shiftexp(
+        t+lmr['straggling'],
+        total=lmr['nservers'],
+        order=lmr['nservers'],
+        parameter=lmr['straggling'],
+    )
+    for i in range(1, lmr['nservers']):
+        pdf[i] = stats.order_cdf_shiftexp(
+            t+lmr['straggling'],
             total=lmr['nservers'],
+            order=i,
+            parameter=lmr['straggling'],
         )
-        if i < lmr['nservers']:
-            rv2 = stats.ShiftexpOrder(
-                parameter=lmr['straggling'],
-                order=i+1,
-                total=lmr['nservers'],
-            )
-            pdf[i] = rv1.cdf(t+lmr['straggling'])
-            pdf[i] -= rv2.cdf(t+lmr['straggling'])
-        else:
-            pdf[i] = rv1.cdf(t+lmr['straggling'])
-
+        pdf[i] -= stats.order_cdf_shiftexp(
+            t+lmr['straggling'],
+            total=lmr['nservers'],
+            order=i+1,
+            parameter=lmr['straggling'],
+        )
+    np.clip(pdf, 0, None, out=pdf) # clip values to (0, inf)
     return pdf
