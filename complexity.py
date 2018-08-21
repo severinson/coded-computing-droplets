@@ -5,12 +5,23 @@
 import math
 import logging
 
-def decodingf(lmr):
-    a = 10*lmr.nrows*lmr.ADDITIONC
-    m = 10*lmr.nrows*lmr.MULTIPLICATIONC
+from numba import jit
+
+# arithmetic complexity
+WORD_SIZE = 8
+ADDITIONC = WORD_SIZE/64
+MULTIPLICATIONC = WORD_SIZE*math.log2(WORD_SIZE)
+
+def testf(lmr, reloverhead=1):
+    '''Decoding complexity function for tests.
+
+    '''
+    assert 1 <= reloverhead < math.inf
+    a = 10*lmr['nrows']*reloverhead*ADDITIONC
+    m = 10*lmr['nrows']*reloverhead*MULTIPLICATIONC
     return a+m
 
-def decoding0(lmr):
+def decoding0(lmr, reloverhead=1.0):
     return 0
 
 def r10_complexity(lmr, reloverhead=1.02, max_deg=40):
@@ -23,7 +34,7 @@ def r10_complexity(lmr, reloverhead=1.02, max_deg=40):
     of all higher degrees have been added to that degree.
 
     '''
-    K = lmr.nrows/lmr.droplet_size
+    K = lmr['nrows']/lmr['droplet_size']
     if not 900 <= K <= 1100:
         logging.warning('K={} too far from 1000'.format(K))
         return math.inf
@@ -40,7 +51,7 @@ def r10_complexity(lmr, reloverhead=1.02, max_deg=40):
             reloverhead,
         ))
     a = tbl[(max_deg, reloverhead)]*K
-    a *= lmr.droplet_size*lmr.ADDITIONC
+    a *= lmr['droplet_size']*ADDITIONC
     return a
 
 def lt_complexity(lmr, reloverhead=1.3):
@@ -62,8 +73,8 @@ def lt_complexity(lmr, reloverhead=1.3):
         raise ValueError('no data for reloverhead={}'.format(reloverhead))
     a = tbl[reloverhead]*K
     m = a
-    a *= lmr.droplet_size*lmr.ADDITIONC
-    m *= lmr.droplet_size*lmr.MULTIPLICATIONC
+    a *= lmr.droplet_size*ADDITIONC
+    m *= lmr.droplet_size*MULTIPLICATIONC
     return a+m
 
 def rq_complexity(lmr, reloverhead=1.02):
@@ -79,8 +90,8 @@ def rq_complexity(lmr, reloverhead=1.02):
         logging.warning('K={} too far from 1000'.format(K))
         return math.inf
     a, m = 475*K, 240*K
-    a *= lmr.droplet_size*lmr.ADDITIONC
-    m *= lmr.droplet_size*lmr.MULTIPLICATIONC
+    a *= lmr.droplet_size*ADDITIONC
+    m *= lmr.droplet_size*MULTIPLICATIONC
     return a+m
 
 def rs_decoding_complexity_fft(lmr, erasure_prob=None, code_length=None):
@@ -105,8 +116,8 @@ def rs_decoding_complexity_fft(lmr, erasure_prob=None, code_length=None):
     f = lambda x, a, b, c: a+b*x*math.log2(c*x)
     a = f(code_length, 2, 8.5, 0.86700826)
     m = f(code_length, 2, 1, 4)
-    a *= lmr.ADDITIONC
-    m *= lmr.MULTIPLICATIONC
+    a *= ADDITIONC
+    m *= MULTIPLICATIONC
     return a+m
 
 def rs_decoding_complexity(lmr, erasure_prob=None, code_length=None):
@@ -124,14 +135,14 @@ def rs_decoding_complexity(lmr, erasure_prob=None, code_length=None):
 
     '''
     assert code_length is not None
-    a = code_length * (erasure_prob * code_length - 1) * lmr.droplet_size
-    m = pow(code_length, 2) * erasure_prob * lmr.droplet_size
-    a *= lmr.ADDITIONC
-    m *= lmr.MULTIPLICATIONC
+    a = code_length * (erasure_prob * code_length - 1) * lmr['droplet_size']
+    m = pow(code_length, 2) * erasure_prob * lmr['droplet_size']
+    a *= ADDITIONC
+    m *= MULTIPLICATIONC
     return a+m
 
 def bdc_decoding_complexity(lmr, erasure_prob=None, code_length=None,
-                            partitions=1, algorithm='bm'):
+                            partitions=1, reloverhead=1.0, algorithm='bm'):
     '''Compute the decoding complexity of block-diagonal codes
 
     Return the number of operations (additions and multiplications)
@@ -154,9 +165,9 @@ def bdc_decoding_complexity(lmr, erasure_prob=None, code_length=None,
 
     '''
     if code_length is None:
-        code_length = lmr.ndroplets
+        code_length = lmr['ndroplets']
     if erasure_prob is None:
-        erasure_prob = 1 - lmr.code_rate
+        erasure_prob = 1 - lmr['code_rate']
     # assert partitions % 1 == 0
     # assert code_length % partitions == 0, 'Partitions must divide code_length.'
     partition_length = code_length / partitions
