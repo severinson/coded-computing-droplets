@@ -17,11 +17,11 @@ from diskcache import FanoutCache
 cache = FanoutCache('./diskcache')
 
 # pyplot setup
-plt.style.use('seaborn-paper')
+plt.style.use('ggplot')
 plt.rc('pgf',  texsystem='pdflatex')
 plt.rc('text', usetex=True)
 plt.rcParams['text.latex.preamble'] = [r'\usepackage{lmodern}']
-plt.rcParams['figure.figsize'] = (3, 3)
+plt.rcParams['figure.figsize'] = (5, 5)
 plt.rcParams['figure.dpi'] = 300
 
 def lmr1():
@@ -31,6 +31,19 @@ def lmr1():
         nservers=100,
         nrows=10000,
         ncols=100,
+        nvectors=100,
+        ndroplets=round(10000*1.5),
+        droplet_size=100,
+        decodingf=complexity.testf,
+    )
+
+def lmr2():
+    '''return a LMR system'''
+    return typedefs.lmr_factory(
+        straggling_factor=10000,
+        nservers=300,
+        nrows=100000,
+        ncols=10,
         nvectors=100,
         ndroplets=round(10000*1.5),
         droplet_size=100,
@@ -57,7 +70,7 @@ def success_from_t(t, d, lmr, n_max=math.inf, success_target=100):
         n += 1
     return success, n
 
-# @njit
+@jit(parallel=True)
 def delay_cdf_sim(x, d, lmr):
     '''Evaluate the CDF of the delay at times x.
 
@@ -71,23 +84,16 @@ def delay_cdf_sim(x, d, lmr):
 
     '''
     cdf = np.zeros(len(x))
-    for i, t in enumerate(x):
-
-        # n = 0
-        # print(i, len(x))
-        # while n-cdf[i] < 100 and n < n_max:
-        #     # for _ in range(n):
-        #     a = delay.delays(0, lmr)
-        #     drops = np.floor(np.maximum(t-a, 0)/dropletc).sum()
-        #     if drops >= d: # and a[-1] <= t:
-        #         cdf[i] += 1
-        #     n += 1
-        # cdf[i] /= n
+    for i in prange(len(x)):
+        t = x[i]
+        # for i, t in enumerate(x):
         success, samples = success_from_t(t, d, lmr)
         cdf[i] = success/samples
+        # print('{}/{}, cdf[i]={}, t={}'.format(i, len(x), cdf[i], t))
         # cdf[i] = result['success']/result['samples']
     return cdf
 
+@jit
 def union_bound_1(t, d, lmr):
     '''Lower-bound the probability of computing d droplets within time t.
 
@@ -203,13 +209,16 @@ def plot_cdf(num_droplets=2000):
 
     # x = np.linspace(0, 100*max(straggling_parameter, complexity), 10)
     # time needed to get the droplets
-    lmr = lmr1()
+    lmr = lmr2()
     print(lmr)
     t = delay.delay_estimate(num_droplets, lmr)
 
     r1 = 1
-    r2 = 20
-    x = np.linspace(t*r1, t*r2, 10)
+    r2 = 30
+    x1 = np.linspace(t/r2, t*r1, 100)
+    x2 = np.linspace(t*r1, t*r2, 100)[:83]
+    x = np.concatenate((x1, x2))
+    print(x)
 
     # make sure the PDF is correct
     # cdf = np.fromiter((stats.order_cdf_shiftexp(
@@ -240,13 +249,14 @@ def plot_cdf(num_droplets=2000):
 
     # simulated
     cdf = delay_cdf_sim(x, num_droplets, lmr)
-    # return
-    plt.semilogy(x, 1-cdf, label='simulation')
+    # plt.semilogy(x, 1-cdf, label='simulation')
+    plt.loglog(x, 1-cdf, label='Simulation')
     print(cdf)
 
     # bounds
     cdf = np.fromiter((union_bound_1(t, num_droplets, lmr) for t in x), dtype=float)
-    plt.semilogy(x, 1-cdf, label='Bound1')
+    # plt.semilogy(x, 1-cdf, 'k--', label='Upper Bound')
+    plt.loglog(x, 1-cdf, 'k--', label='Upper Bound')
     print(cdf)
 
     # print('3', bound3(t, num_droplets, lmr))
@@ -276,8 +286,14 @@ def plot_cdf(num_droplets=2000):
     # only order statistics
     # cdf = delay_cdf(x, 1000)
     # plt.plot(x, cdf, label='order statistic')
-    plt.grid()
+    plt.xlim((1e8, 1e11))
+    plt.ylim((1e-7, 1))
+    plt.grid(True)
     plt.legend()
+    plt.xlabel(r'$t$')
+    plt.ylabel(r'$\Pr(\rm{Delay} > t$)')
+    plt.tight_layout()
+    plt.savefig('./plots/180820/bound.png', dpi='figure', bbox_inches='tight')
     plt.show()
     return
 
