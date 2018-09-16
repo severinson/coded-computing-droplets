@@ -13,7 +13,6 @@ from matplotlib2tikz import save as tikz_save
 from functools import partial
 from scipy.stats import expon
 from scipy.special import lambertw
-from scipy.optimize import minimize
 from numba import njit
 
 # pyplot setup
@@ -23,89 +22,6 @@ plt.rc('text', usetex=True)
 plt.rcParams['text.latex.preamble'] = [r'\usepackage{lmodern}']
 plt.rcParams['figure.figsize'] = (3, 3)
 plt.rcParams['figure.dpi'] = 300
-
-@njit
-def delay_cdf_sim(x, d, n=100):
-    '''Evaluate the CDF of the delay at times x.
-
-    Args:
-
-    x: array of delays to evaluate the CDF at.
-
-    d: required number of droplets.
-
-    n: number of samples.
-
-    '''
-    cdf = np.zeros(len(x))
-    for i, t in enumerate(x):
-        for _ in range(n):
-            a = get_delay(math.inf)
-            drops = np.floor((t-a)/complexity).sum()
-            if drops >= d and a[-1] <= t:
-                cdf[i] += 1
-        cdf[i] /= n
-    return cdf
-
-def plot_cdf(num_droplets=2000):
-    # x = np.linspace(0, 100*max(straggling_parameter, complexity), 10)
-    # time needed to get the droplets
-    t = pynumeric.cnuminv(drops_estimate, target=num_droplets)
-    plt.plot([t, t], [0, 1], label='avg. t')
-
-    # simulated
-    x = np.linspace(t/1.05, t*1.05, 100)
-    cdf = delay_cdf_sim(x, num_droplets)
-    plt.plot(x, cdf, label='simulation')
-
-    # gamma cdf
-    rv = stats.ShiftexpOrder(
-        parameter=straggling_parameter,
-        total=num_servers,
-        order=num_servers,
-    )
-    t_cdf = rv.mean()-straggling_parameter
-    plt.plot([t_cdf, t_cdf], [0, 1], label='cdf t')
-
-    pdf = np.diff(cdf)
-    pdf /= pdf.sum()
-    mean_t = integrate.trapz(pdf*x[1:])
-    # mean_t = (pdf*x[1:]).sum()
-
-    t_ana = delay_mean(num_droplets)
-    plt.plot([t_ana, t_ana], [0, 1], label='analytic')
-
-    print('empric: {} finv: {} cdf: {} analytic: {}'.format(mean_t, t, t_cdf, t_ana))
-
-    # only order statistics
-    # cdf = delay_cdf(x, 1000)
-    # plt.plot(x, cdf, label='order statistic')
-    plt.grid()
-    plt.legend()
-    # plt.show()
-    return
-
-def drops_cdf():
-    t = np.linspace(1, 10*max(straggling_parameter, complexity), 100)
-    y = [computed_drops(i) for i in t]
-    plt.plot(t, [i[0] for i in y], '-o', label='simulation', markevery=0.1)
-    # plt.plot(t, [i[1] for i in y], label='lb')
-    # plt.plot(t, [i[2] for i in y], label='up')
-    # plt.plot(t, [(i[1]+i[2])/2 for i in y], label='(lb+up)/2')
-
-    y = [bound4(i) for i in t]
-    # plt.plot(t, [i[0] for i in y], label='analytic lb')
-    plt.plot(t, [i[1] for i in y], '-', label='integral')
-    # plt.plot(t, [(i[0]+i[1])/2 for i in y], label='analytic mean')
-
-    y = [bound5(i) for i in t]
-    plt.plot(t, [i[1] for i in y], '--', label='approximation')
-    plt.grid()
-    plt.xlabel('time')
-    plt.ylabel('avg. number of droplets computed')
-    plt.legend()
-    plt.show()
-    return
 
 def estimate_waste():
     a = get_delay(verbose=False)
@@ -237,7 +153,7 @@ def lmr1():
         ncols=100,
         ndroplets=round(10000*1.5),
         droplet_size=100,
-        decodingf=complexity.decodingf,
+        decodingf=complexity.testf,
     )
 
 def plot_mean_delay():
@@ -657,77 +573,6 @@ centralized_plot_string = 'r-s'
 bound_plot_string = 'k-'
 classical_plot_string = 'g:'
 
-def optimize_q_bdc(lmr, num_partitions):
-    '''Optimize the value of q for the BDC scheme
-
-    '''
-    def f(q):
-        nonlocal lmr
-        q = q[0]
-        # q = int(round(q[0]))
-
-        # enforce bounds
-        if q > lmr.nservers:
-            return q * 1e32
-        if q < 1:
-            return -(q-2) * 1e32
-
-        decoding = complexity.bdc_decoding_complexity(
-            lmr,
-            partitions=num_partitions,
-        )
-        decoding *= lmr.nvectors / q
-
-        # interpolate between the floor and ceil of q
-        s1 = stats.ShiftexpOrder(
-            parameter=lmr.straggling,
-            total=lmr.nservers,
-            order=int(math.floor(q)),
-        ).mean()
-        s2 = stats.ShiftexpOrder(
-            parameter=lmr.straggling,
-            total=lmr.nservers,
-            order=int(math.ceil(q)),
-        ).mean()
-        straggling = s1 * (math.ceil(q)-q) + s2 * (q-math.floor(q))
-        return decoding + straggling
-
-    result = minimize(
-        f,
-        x0=lmr.nservers-1,
-        # bounds=[(1, lmr.nservers)],
-        method='Powell',
-    )
-    wait_for = int(result.x.round())
-    delay = result.fun
-
-    # add the overhead due to partitioning
-    # this is an upper bound
-    delay += lmr.dropletc * num_partitions / 2
-
-    return wait_for, delay
-
-def optimize_bdc(lmr):
-    '''Optimize the number of partitions and the number of servers to wait
-    for.
-
-    '''
-    min_q = None
-    min_d = math.inf
-    min_T = None
-    max_T = int(round(lmr.nrows / lmr.droplet_size))
-    for T in range(int(round(max_T*0.9)), max_T+1):
-        # if lmr.ndroplets % T != 0:
-        #     continue
-        q, d = optimize_q_bdc(lmr, T)
-        if d < min_d:
-            min_d = d
-            min_q = q
-            min_T = T
-
-    # print('T={}, q={} is optimal for lmr {}'.format(min_T, min_q, lmr))
-    return min_q, min_d
-
 def raptor_plot():
     lmrs = get_parameters_workload()
     uncoded = droplets.simulate(delay.delay_uncoded, lmrs)
@@ -1083,6 +928,7 @@ def linearity_plot():
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
+    drops_cdf()
     # [print(lmr) for lmr in get_parameters_straggling()]
     # [print(round(lmr.nrows/lmr.droplet_size)) for lmr in get_parameters_straggling()]
     # [print(lmr) for lmr in get_parameters_workload()]
@@ -1092,7 +938,7 @@ if __name__ == '__main__':
     # plot_mean_delay()
     # droplets_plot()
     # bounds_plot()
-    straggling_plot()
+    # straggling_plot()
     # estimate_plot()
     # q_plot()
     # raptor_plot()
