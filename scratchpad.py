@@ -216,7 +216,7 @@ def find_parameters(nservers, C=1e4, code_rate=1/3, tol=0.02,
         nvectors=nvectors,
         nservers=nservers,
         straggling_factor=straggling_factor,
-        decodingf=complexity.decodingf,
+        decodingf=complexity.testf,
         ndroplets=ndroplets,
         droplet_size=droplet_size,
         wait_for=wait_for,
@@ -256,7 +256,7 @@ def find_parameters_2(nservers, C=1e4, code_rate=1/3, tol=0.02,
         nvectors=nvectors,
         nservers=nservers,
         straggling_factor=straggling_factor,
-        decodingf=complexity.decodingf,
+        decodingf=complexity.testf,
         ndroplets=ndroplets,
         droplet_size=droplet_size,
         wait_for=wait_for,
@@ -341,7 +341,7 @@ def straggling_plot():
     bdc = droplets.simulate(
         partial(delay.delay_mean_simulated, overhead=1.0, n=100, order='heuristic'),
         lmrs,
-        cache='bdc_straggling',
+        cache='bdc_straggling_upper',
     )
 
     # add decoding/straggling delay
@@ -609,7 +609,7 @@ def raptor_plot():
     bdc = droplets.simulate(
         partial(delay.delay_mean_simulated, overhead=1.0, n=100, order='heuristic'),
         lmrs,
-        cache='bdc',
+        cache='bdc_upper',
     )
 
     # add decoding/straggling delay
@@ -659,7 +659,7 @@ def raptor_plot():
     rr = droplets.simulate(
         partial(delay.delay_mean_simulated, overhead=1.020148, n=100, order='heuristic'),
         lmrs,
-        cache='heuristic',
+        cache='heuristic_upper',
     )
     rr['delay'] /= uncoded['delay']
 
@@ -928,7 +928,6 @@ def linearity_plot():
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
-    drops_cdf()
     # [print(lmr) for lmr in get_parameters_straggling()]
     # [print(round(lmr.nrows/lmr.droplet_size)) for lmr in get_parameters_straggling()]
     # [print(lmr) for lmr in get_parameters_workload()]
