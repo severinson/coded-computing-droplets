@@ -146,8 +146,9 @@ def delay_mean_simulated(lmr, overhead=1.1, n=10, order=ROUND_ROBIN):
     for i in range(lmr.droplets_per_server):
         server_droplet_order[i*lmr.nvectors:(i+1)*lmr.nvectors] = v
 
+    a = np.zeros(lmr['nservers'])
     for k in range(n):
-        a = delays(0, lmr)
+        a = delays(0, lmr, a)
         assert len(a) == lmr.nservers
         for i in range(lmr.nservers):
             if order == RANDOM:
@@ -346,9 +347,9 @@ def delays(t, lmr, out=None):
     for i in prange(lmr['nservers']):
         out[i] = np.random.exponential(scale=lmr['straggling'])
     out.sort()
-    if t > 0:
-        i = np.searchsorted(out, t)
-        out = out[:i]
+    # if t > 0:
+    #     i = np.searchsorted(out, t)
+    #     out = out[:i]
     return out
 
 @njit
