@@ -23,127 +23,6 @@ plt.rcParams['text.latex.preamble'] = [r'\usepackage{lmodern}']
 plt.rcParams['figure.figsize'] = (3, 3)
 plt.rcParams['figure.dpi'] = 300
 
-def estimate_waste():
-    a = get_delay(verbose=False)
-    d = np.floor((t-a)/complexity)
-    assert d.min() >= 0
-    waste = t - a - d*complexity
-    est = complexity/2
-    print('mean waste is {}. est is {}'.format(waste.mean(), est))
-    print('{} droplets computed'.format(d.sum()))
-    plt.hist(waste,bins=50)
-    plt.show()
-    return
-
-def estimate_hist():
-    # d, est1, est2 = estimates()
-    samples = np.fromiter((estimates()[0] for _ in range(1000)), dtype=int)
-    est1 = np.fromiter((estimates()[1] for _ in range(1000)), dtype=int)
-    est2 = np.fromiter((estimates()[2] for _ in range(1000)), dtype=int)
-    print('true mean is', samples.mean())
-    # print('est1 mean is', est1.mean())
-    print('est2 mean is', est2.mean())
-
-    plt.figure()
-    plt.hist(samples, label='true')
-    # plt.hist(est1, label='est1')
-    plt.hist(est2, label='est2')
-    plt.legend()
-    plt.show()
-    return
-
-def delay_samples(t):
-    samples = list()
-    lsamples = list()
-    for _ in range(10000):
-        a = get_delay(t)
-        samples.append(a.sum())
-        lsamples.append(len(a))
-    return np.fromiter(samples, dtype=float), np.fromiter(lsamples, dtype=float)
-
-def delay_hist():
-    # it's probably right that the exp rvs just scale. but the gamma
-    # does something else. we should maybe just settle for the
-    # asymptotic expression. it does pretty well..
-    t = 0.5*straggling_parameter
-    samples, lsamples = delay_samples(t)
-    plt.hist(samples, bins=50, density=True, label='thr=0.5')
-    print(lsamples.mean()*straggling_parameter, samples.mean())
-
-    t = 1*straggling_parameter
-    samples, lsamples = delay_samples(t)
-    plt.hist(samples, bins=50, density=True, label='thr=1')
-    print(lsamples.mean()*straggling_parameter, samples.mean())
-
-    t = 2*straggling_parameter
-    samples, lsamples = delay_samples(t)
-    plt.hist(samples, bins=50, density=True, label='thr=2')
-    print(lsamples.mean()*straggling_parameter, samples.mean())
-
-    t = 3*straggling_parameter
-    samples, lsamples = delay_samples(t)
-    plt.hist(samples, bins=50, density=True, label='thr=3')
-    print(lsamples.mean()*straggling_parameter, samples.mean())
-
-    t = 4*straggling_parameter
-    samples, lsamples = delay_samples(t)
-    plt.hist(samples, bins=50, density=True, label='thr=4')
-    print(lsamples.mean()*straggling_parameter, samples.mean())
-
-    plt.legend()
-    plt.grid()
-    plt.show()
-    return
-
-def plot_integrand():
-    t = 100*straggling_parameter
-    bf = lambda x: math.floor((t-x) / complexity)
-    bf2 = lambda x: (t-x) / complexity
-    f = lambda x: expon.pdf(x, scale=straggling_parameter)*bf(x)
-    x = np.linspace(0, t, 10)
-    y = [bf(i) for i in x]
-    # plt.plot(x, y, label='floor')
-    y2 = [bf2(i) for i in x]
-    # plt.plot(x, y2, label='no floor')
-    plt.plot(x, [i2-i1 for i1, i2 in zip(y, y2)], label='diff')
-
-    dx1 = straggling_parameter+complexity
-    dy1 = bf2(dx1) - bf(dx1)
-    a1 = dy1/dx1
-    f = lambda x: a1*x
-    x = np.linspace(0, straggling_parameter+complexity)
-    plt.plot(x, [f(i) for i in x], '--')
-
-    dx2 = t
-    dy2 = 0
-    a2 = -dy1 / (dx2-dx1)
-    c = dy1 - a2*dx1
-    f = lambda x: a2*x+c
-    x = np.linspace(straggling_parameter+complexity, t)
-    plt.plot(x, [f(i) for i in x], '--')
-
-    plt.grid()
-    plt.legend()
-    plt.show()
-    return
-
-def exptest():
-    '''Plots to investigate if an exponential RV truncated on the left is
-    a shifted exponential.
-
-    '''
-    trunc = 2
-    norm = 1-expon.cdf(trunc, scale=straggling_parameter)
-    print(norm)
-    t = np.linspace(0, trunc)
-    tt = np.linspace(trunc, 2*trunc)
-    plt.plot(t, expon.pdf(tt, scale=straggling_parameter)/norm, label='shifted')
-    plt.plot(t, expon.pdf(t, scale=straggling_parameter), label='orig')
-    plt.grid()
-    plt.legend()
-    plt.show()
-    return
-
 def lmr1():
     '''return a LMR system'''
     return droplets.LMR(
@@ -544,26 +423,6 @@ def estimate_plot():
     plt.show()
     return
 
-def bounds_plot():
-    lmr = lmr1()
-    d1 = 1
-    d2 = 1000
-    d = np.linspace(d1, d2, dtype=int)
-    avg = [delay.delay_estimate(x, lmr) for x in d]
-    lower = [delay.delay_lower(x, lmr) for x in d]
-    upper = [delay.delay_upper(x, lmr) for x in d]
-    lower2 = [delay.delay_lower2(x, lmr) for x in d]
-    upper2 = [delay.delay_upper2(x, lmr) for x in d]
-    plt.plot(d, avg, label='avg.')
-    plt.plot(d, lower, label='lower')
-    plt.plot(d, upper, label='upper')
-    plt.plot(d, lower2, label='lower2')
-    plt.plot(d, upper2, label='upper2')
-    plt.grid()
-    plt.legend()
-    plt.show()
-    return
-
 r10_plot_string = 'b-o'
 r10d11_plot_string = 'g-v'
 rq_plot_string = 'g-^'
@@ -936,8 +795,7 @@ if __name__ == '__main__':
     # plot_server_pdf()
     # plot_mean_delay()
     # droplets_plot()
-    # bounds_plot()
-    # straggling_plot()
+    straggling_plot()
     # estimate_plot()
     # q_plot()
     # raptor_plot()
