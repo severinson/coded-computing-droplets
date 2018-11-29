@@ -1,3 +1,10 @@
+'''This module defines a custom numpy dtype describing a coded
+computing system. Specifically, it describes a struct containing all
+parameters necessery for describing the system. Many functions in this
+project take a struct of this kind as its argument.
+
+'''
+
 import math
 import numpy as np
 
