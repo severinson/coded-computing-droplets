@@ -249,10 +249,10 @@ def cdf_q_bound(t, d=None, lmr=None):
     return r
 
 def bound3_inner(g, t, d, lmr):
-    # g servers can always complete the computation by themselves if
-    # the g-th server becomes ready at T1 at the latest.
+    # g servers can complete the computation by themselves if the g-th
+    # server becomes available by T1 at the latest.
     T1 = t - d * lmr['dropletc'] / g
-    if T1 < 0:
+    if T1 < 0: # it's impossible to complete by time t
         return 0
     v1 = stats.order_cdf_shiftexp(
         T1+lmr['straggling'],
@@ -261,16 +261,19 @@ def bound3_inner(g, t, d, lmr):
         parameter=lmr['straggling'],
     )
     r = v1
+
+    # exit here if no more servers can become available
     if g == lmr['nservers']:
         return r
+
     f = lambda x: stats.order_pdf_shiftexp(
         x+lmr['straggling'],
         total=lmr['nservers'],
         order=g,
         parameter=lmr['straggling']
     )
+
     r_inner = 0
-    # for g2 in range(g+1, g+2):
     for g2 in range(g+1, lmr['nservers']+1):
         # same as T1 but for g2 servers
         T2 = t - d * lmr['dropletc'] / g2
@@ -288,14 +291,22 @@ def bound3_inner(g, t, d, lmr):
         v2, abserr = integrate.quad(lambda x: f(x)*F(x), T1, T2)
         if not np.isnan(v2):
             r_inner = max(r_inner, v2)
+
+    # print('r/r_inner', )
     r += r_inner
-    # print(v1, r_inner, r)
     return r
 
 def bound3(t, d=None, lmr=None):
     r = 0
     for g in range(1, lmr['nservers']+1):
         v = bound3_inner(g, t, d, lmr)
+        # if g < lmr['wait_for']:
+        #     v *= stats.order_cdf_shiftexp(
+        #         t-T+lmr['straggling'],
+        #         total=lmr['nservers']-g,
+        #         order=lmr['wait_for']-g,
+        #         parameter=lmr['straggling']
+        #     )
         r = max(r, v)
     print('r', r)
     return min(r, 1.0)
@@ -406,7 +417,7 @@ def plot_cdf():
     plt.xlabel(r'$t$')
     plt.ylabel(r'$\Pr(\rm{Delay} > t$)')
     plt.tight_layout()
-    plt.savefig('./plots/180820/bound.png', dpi='figure', bbox_inches='tight')
+    # plt.savefig('./plots/180820/bound.png', dpi='figure', bbox_inches='tight')
     plt.show()
     return
 
