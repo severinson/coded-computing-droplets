@@ -54,29 +54,31 @@ def delay_classical(lmr):
     return result
 
 def delay_mean_empiric(lmr, overhead=1.1, d_tot=None, n=100):
-    '''Return the simulated mean delay of the map phase.
+    '''return the simulated mean delay of the map phase, i.e., the average
+    delay until d droplets have been computed and wait_for servers
+    have become available.
 
-    Assumes that the map phase ends whenever a total of d droplets
-    have been computed and the slowest server is available. Also
-    assumes that which droplet to compute next is selected optimally.
+    assumes that droplet are computed in optimal order. does not take
+    decoding delay into account.
 
     '''
     if d_tot is None:
         d_tot = lmr.nrows*lmr.nvectors/lmr.droplet_size*overhead
-    result = 0
-    max_drops = lmr.droplets_per_server*lmr.nvectors
-    if max_drops * lmr.nservers < d_tot:
+    result = 0.0
+    max_drops = lmr['droplets_per_server']*lmr['nvectors']
+    if max_drops * lmr['nservers'] < d_tot:
         return math.inf
-    dropletc = lmr.dropletc # cache this value
+    dropletc = lmr['dropletc'] # cache this value
+    a = np.zeros(lmr['nservers'])
     for _ in range(n):
-        a = delays(None, lmr)
-        t_servers = a[lmr.wait_for-1] # a is sorted
+        delays(0, lmr, out=a)
+        t_servers = a[lmr['wait_for']-1] # a is sorted
         f = lambda x: np.floor(
             np.minimum(np.maximum((x-a)/dropletc, 0), max_drops)
         ).sum()
         t_droplets = pynumeric.cnuminv(f, d_tot, tol=dropletc)
         result += max(t_servers, t_droplets)
-    return result/n + lmr.decodingc
+    return result/n
 
 def delay_mean_centralized(lmr, overhead=1.1):
     '''Return the mean delay when there is a central reducer, i.e., a
@@ -347,9 +349,6 @@ def delays(t, lmr, out=None):
     for i in prange(lmr['nservers']):
         out[i] = np.random.exponential(scale=lmr['straggling'])
     out.sort()
-    # if t > 0:
-    #     i = np.searchsorted(out, t)
-    #     out = out[:i]
     return out
 
 @njit

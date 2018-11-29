@@ -22,7 +22,7 @@ plt.style.use('ggplot')
 plt.rc('pgf',  texsystem='pdflatex')
 plt.rc('text', usetex=True)
 plt.rcParams['text.latex.preamble'] = [r'\usepackage{lmodern}']
-plt.rcParams['figure.figsize'] = (5, 5)
+plt.rcParams['figure.figsize'] = (3, 3)
 plt.rcParams['figure.dpi'] = 300
 
 def find_parameters_2(nservers, C=1e4, code_rate=1/3, tol=0.02,
@@ -82,6 +82,20 @@ def get_parameters_workload():
         if lmr['nrows'] <= min_nrows:
             continue
         min_nrows = lmr['nrows']
+        l.append(lmr)
+    return l
+
+def get_parameters_straggling():
+    C_target = 1e7
+    l = list()
+    nservers = 625
+    for i in np.linspace(1, 5, 20):
+        lmr = find_parameters_2(
+            nservers, C=C_target,
+            straggling_factor=i,
+            tol=0.1,
+            ratio=1000,
+        )
         l.append(lmr)
     return l
 
@@ -216,6 +230,30 @@ def cdf_bound(t, d, lmr):
     return r
 
 @jit
+def single_lower_bound(t, d, g, lmr):
+    '''return the probability that g servers become available in time to
+    guarantee that d droplets are computed by time t.
+
+    '''
+    t1 = g1_deadline(t, d, g, lmr)
+    if t1 < 0:
+        return 0.0
+    result = stats.order_cdf_shiftexp(
+        t1+lmr['straggling'],
+        total=lmr['nservers'],
+        order=g,
+        parameter=lmr['straggling'],
+    )
+    if g < lmr['wait_for']:
+        result *= stats.order_cdf_shiftexp(
+            t-t1+lmr['straggling'],
+            total=lmr['nservers']-g,
+            order=lmr['wait_for']-g,
+            parameter=lmr['straggling']
+        )
+    return result
+
+@jit
 def cdf_q_bound(t, d=None, lmr=None):
     '''Lower-bound the probability of computing d droplets and having q
     servers available within time t.
@@ -225,91 +263,135 @@ def cdf_q_bound(t, d=None, lmr=None):
     consists of finding the most probable of these events.
 
     '''
-    r = 0
+    result = 0.0
     for g in range(1, lmr['nservers']+1):
-        T = t - d * lmr['dropletc'] / g
-        if T < 0:
-            continue
-        v = stats.order_cdf_shiftexp(
-            T+lmr['straggling'],
-            total=lmr['nservers'],
-            order=g,
-            parameter=lmr['straggling'],
-        )
-        v1 = v
-        if g < lmr['wait_for']:
-            v *= stats.order_cdf_shiftexp(
-                t-T+lmr['straggling'],
-                total=lmr['nservers']-g,
-                order=lmr['wait_for']-g,
-                parameter=lmr['straggling']
-            )
-        r = max(r, v)
+        result = max(single_lower_bound(t, d, g, lmr), result)
+    return result
 
-    return r
+@njit
+def g1_deadline(t, d, g, lmr):
+    '''return the latest time at which server g may become available to
+    guarantee that d droplets have been computed by time t.
+
+    '''
+    return t - d * lmr['dropletc']/ g
+
+@njit
+def g2_deadline(t, t1, d, g1, g2, lmr):
+    '''return the latest time at which server g2 (> g1) has to become
+    available to guarantee that d droplets have been computed by time
+    t. assumes server g1 became available at time t1.
+
+    '''
+    return (g2*t - g1*t1 - d*lmr['dropletc']) / (g2-g1)
+
+@jit
+def pair_lower_bound(t1, t=None, d=None, g1=None, g2=None, lmr=None):
+    '''lower bound the probability that d droplets have been computed and
+    wait_for serves has become available by time t.
+
+    '''
+
+    # probability that g1 servers have become available by time t1.
+    result = stats.order_pdf_shiftexp(
+        t1+lmr['straggling'],
+        total=lmr['nservers'],
+        order=g1,
+        parameter=lmr['straggling']
+    )
+
+    # time at which g2 servers has to become available to guarantee
+    # that d droplets have been computed by time t.
+    t2 = g2_deadline(t, t1, d, g1, g2, lmr)
+
+    # probability that g2 servers has become available at time t2
+    # given that g1 servers was available at time t1.
+    result *= stats.order_cdf_shiftexp(
+        t2-t1+lmr['straggling'],
+        total=lmr['nservers']-g1,
+        order=g2-g1,
+        parameter=lmr['straggling']
+    )
+
+    # probability that wait_for servers are available at time t.
+    if g2 < lmr['wait_for']:
+        result *= stats.order_cdf_shiftexp(
+            t-t2+lmr['straggling'],
+            total=lmr['nservers']-g2,
+            order=lmr['wait_for']-g2,
+            parameter=lmr['straggling']
+        )
+
+    return result
 
 def bound3_inner(g, t, d, lmr):
-    # g servers can complete the computation by themselves if the g-th
-    # server becomes available by T1 at the latest.
-    T1 = t - d * lmr['dropletc'] / g
-    if T1 < 0: # it's impossible to complete by time t
-        return 0
-    v1 = stats.order_cdf_shiftexp(
-        T1+lmr['straggling'],
+    t1 = g1_deadline(t, d, g, lmr)
+
+    # exit if deadline is impossible to meet
+    if t1 < 0:
+        return 0.0
+
+    # probability that g servers are available in time to guarantee
+    # that d droplets have been computed by time t.
+    result = stats.order_cdf_shiftexp(
+        t1+lmr['straggling'],
         total=lmr['nservers'],
         order=g,
         parameter=lmr['straggling'],
     )
-    r = v1
 
-    # exit here if no more servers can become available
+    # we may need to wait for additional servers
+    if g < lmr['wait_for']:
+        result *= stats.order_cdf_shiftexp(
+            t-t1+lmr['straggling'],
+            total=lmr['nservers']-g,
+            order=lmr['wait_for']-g,
+            parameter=lmr['straggling']
+        )
+    # return result
+
+    # exit if there are no more servers that can become available
     if g == lmr['nservers']:
-        return r
+        return result
 
-    f = lambda x: stats.order_pdf_shiftexp(
-        x+lmr['straggling'],
-        total=lmr['nservers'],
-        order=g,
-        parameter=lmr['straggling']
-    )
+    # speed up the computation by exiting here when the probability of
+    # success is already within machine epsilon of 0 or 1
+    eps = np.finfo(float).eps
+    if result <= eps or 1-result <= eps:
+        return result
 
     r_inner = 0
     for g2 in range(g+1, lmr['nservers']+1):
-        # same as T1 but for g2 servers
-        T2 = t - d * lmr['dropletc'] / g2
-        # the time at which the g2-th server has to become ready if the
-        # g-th server became ready at time t1.
-        T3 = lambda t1: g2*t - g*t1 - d*lmr['dropletc']
-        F = lambda x: stats.order_cdf_shiftexp(
-            T3(x)+lmr['straggling'],
-            total=lmr['nservers']-g,
-            order=g2-g,
-            parameter=lmr['straggling']
+        t2 = g1_deadline(t, d, g2, lmr)
+        f = partial(
+            pair_lower_bound,
+            t=t,
+            d=d,
+            g1=g,
+            g2=g2,
+            lmr=lmr,
         )
-        # v1_2, abserr = integrate.quad(lambda x: f(x)*F(x), 0, T1)
-        # print(v1/v1_2)
-        v2, abserr = integrate.quad(lambda x: f(x)*F(x), T1, T2)
-        if not np.isnan(v2):
-            r_inner = max(r_inner, v2)
+        v, abserr = integrate.quad(f, t1, t2)
+        if np.isnan(v):
+            continue
+        r_inner = max(r_inner, v)
+        # print('b3 inner', t2, v, r_inner, result)
 
-    # print('r/r_inner', )
-    r += r_inner
-    return r
+        # exit if combined probability is close to 1
+        if (1 - result - r_inner) <= eps:
+            break
+
+    result += r_inner
+
+    # deal with floating point round-off error when returning
+    return min(result, 1.0)
 
 def bound3(t, d=None, lmr=None):
-    r = 0
+    result = 0.0
     for g in range(1, lmr['nservers']+1):
-        v = bound3_inner(g, t, d, lmr)
-        # if g < lmr['wait_for']:
-        #     v *= stats.order_cdf_shiftexp(
-        #         t-T+lmr['straggling'],
-        #         total=lmr['nservers']-g,
-        #         order=lmr['wait_for']-g,
-        #         parameter=lmr['straggling']
-        #     )
-        r = max(r, v)
-    print('r', r)
-    return min(r, 1.0)
+        result = max(bound3_inner(g, t, d, lmr), result)
+    print('t/result', t, result)
+    return result
 
 def mean_delay(lmr, d):
     '''return the mean delay until d droplets have been computed in total
@@ -339,7 +421,9 @@ def mean_delay3(lmr, d):
             lmr=lmr,
         ),
         target=1/2,
-        tol=1e-6,
+        tol=None,
+        xtol=1e-1,
+        ytol=math.inf,
     )
 
 def plot_cdf():
@@ -352,14 +436,11 @@ def plot_cdf():
 
     '''
 
-    # x = np.linspace(0, 100*max(straggling_parameter, complexity), 10)
     # time needed to get the droplets
     # lmr = lmr1()
     lmr = get_parameters_workload()[-1]
-    print(lmr)
     num_droplets = lmr['nrows']/lmr['droplet_size']*lmr['nvectors']
     t = delay.delay_estimate(num_droplets, lmr)
-    print('d', num_droplets, 't', t)
 
     r1 = 1
     r2 = 30
@@ -372,38 +453,30 @@ def plot_cdf():
     x1_q = np.linspace(t/r2_q, t*r1_q, 100)
     x2_q = np.linspace(t*r1_q, t*r2_q, 100)[:1] # 67
     x_q = np.concatenate((x1_q, x2_q))
-    print(x_q)
 
     # simulated
     cdf = delay_cdf_sim(x, num_droplets, lmr)
     # plt.semilogy(x, 1-cdf, label='simulation')
     plt.loglog(x, 1-cdf, label='Simulation')
-    print(cdf)
 
     cdf_q = delay_q_cdf_sim(x_q, num_droplets, lmr)
     # plt.semilogy(x, 1-cdf, label='simulation')
     plt.loglog(x_q, 1-cdf_q, label='Simulation (q)')
-    print(cdf_q)
 
     # bounds
     x1 = np.linspace(t/r2, t*r1, 100)
     x2 = np.linspace(t*r1, t*r2, 100)
     x = np.concatenate((x1, x2))
     cdf = np.fromiter((cdf_bound(t, num_droplets, lmr) for t in x), dtype=float)
-    # plt.semilogy(x, 1-cdf, 'k--', label='Upper Bound')
-    plt.loglog(x, 1-cdf, 'k--', label='Upper Bound')
-    print(cdf)
+    plt.loglog(x, 1-cdf, 'k-', label='Upper Bound')
 
     cdf_q = np.fromiter((cdf_q_bound(t, num_droplets, lmr) for t in x), dtype=float)
-    # plt.semilogy(x, 1-cdf, 'k--', label='Upper Bound')
-    plt.loglog(x, 1-cdf_q, 'm:', label='Upper Bound (q)')
-    print(cdf)
+    plt.loglog(x, 1-cdf_q, 'm--', label='Upper Bound (q)')
 
-    x = np.linspace(t*r1, t*r2, 2)[:2]
-    cdf = np.fromiter((bound3(t, d=num_droplets, lmr=lmr) for t in x), dtype=float)
-    # plt.semilogy(x, 1-cdf, 'k--', label='Upper Bound')
-    plt.loglog(x, 1-cdf, 'g:', label='Bound3')
-    print(cdf)
+    # x = np.linspace(t*r1, t*r2, 2)[:2]
+    cdf_3 = np.fromiter((bound3(t, d=num_droplets, lmr=lmr) for t in x), dtype=float)
+    plt.loglog(x, 1-cdf_3, 'g:', label='Bound3')
+    print(cdf_3)
 
     # plot average
     # avg = mean_delay(lmr, num_droplets)
@@ -426,16 +499,65 @@ def plot_mean():
     function inversion.
 
     '''
-    lmrs = get_parameters_workload()
+    lmrs = get_parameters_workload()[-3:]
+    # lmrs = get_parameters_straggling()
     for lmr in lmrs:
         d = lmr['nrows']/lmr['droplet_size']*lmr['nvectors']
         avg_inv = delay.delay_mean(lmr, overhead=1.0, d_tot=d)
         avg_cdf = mean_delay(lmr, d)
         avg_3 = mean_delay3(lmr, d)
+        # avg_3 = 684135424.0
+        avg_emp = delay.delay_mean_empiric(lmr, d_tot=d)
         print(lmr)
-        print('inv/cdf/3', avg_inv, avg_cdf, avg_3, avg_cdf/avg_inv, avg_33/avg_inv)
+        print('emp/inv/cdf/3', avg_emp, avg_inv, avg_cdf, avg_3, avg_cdf/avg_inv, avg_3/avg_inv, avg_cdf/avg_emp, avg_3/avg_emp)
         print()
-        break
+
+@njit
+def mean_available(lmr, out=None):
+    '''return an array of length nservers with the average time each
+    server becomes available.
+
+    '''
+    if out is None:
+        out = np.zeros(lmr['nservers'])
+    out[0] = stats.order_mean_shiftexp(
+        total=lmr['nservers'],
+        order=1,
+        parameter=lmr['straggling'],
+    )
+    for i in range(1, lmr['nservers']):
+        out[i] = stats.order_mean_shiftexp(
+            total=lmr['nservers']-i,
+            order=1,
+            parameter=lmr['straggling'],
+        )
+        out[i] += out[i-1]
+    return out
+
+def plot_available():
+    lmr = get_parameters_workload()[-1]
+    av = mean_available(lmr, out=None)
+    print(av)
+    plt.figure()
+    # plt.plot(av, list(range(1, lmr['nservers']+1)), '.', label='cumul.')
+    plt.plot(np.diff(av), '.', label='cumul')
+
+    av2 = np.fromiter(
+        (stats.order_mean_shiftexp(
+            total=lmr['nservers'],
+            order=i,
+            parameter=lmr['straggling'],
+        ) for i in range(1, lmr['nservers']+1)),
+        dtype=float,
+    )
+
+    # plt.plot(av2, list(range(1, lmr['nservers']+1)), '.', label='order')
+    plt.plot(np.diff(av2), '.', label='order')
+    plt.legend()
+
+    plt.figure()
+    plt.plot(np.diff(av) / np.diff(av2), '.')
+    plt.show()
 
 if __name__ == '__main__':
-    plot_cdf()
+    plot_mean()
