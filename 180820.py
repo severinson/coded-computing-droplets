@@ -22,7 +22,7 @@ plt.style.use('ggplot')
 plt.rc('pgf',  texsystem='pdflatex')
 plt.rc('text', usetex=True)
 plt.rcParams['text.latex.preamble'] = [r'\usepackage{lmodern}']
-plt.rcParams['figure.figsize'] = (3, 3)
+plt.rcParams['figure.figsize'] = (6, 6)
 plt.rcParams['figure.dpi'] = 300
 
 def find_parameters_2(nservers, C=1e4, code_rate=1/3, tol=0.02,
@@ -256,7 +256,9 @@ def single_lower_bound(t, d, g, lmr):
 @jit
 def cdf_q_bound(t, d=None, lmr=None):
     '''Lower-bound the probability of computing d droplets and having q
-    servers available within time t.
+    servers available within time t, i.e., the probability that d
+    droplets have been computed and wait_for servers have become
+    available at time t is greater than this.
 
     Considers several events that all mean the computation will
     succeed. The probability of these events overlap. The bound
@@ -274,7 +276,17 @@ def g1_deadline(t, d, g, lmr):
     guarantee that d droplets have been computed by time t.
 
     '''
-    return t - d * lmr['dropletc']/ g
+    return t - d * lmr['dropletc'] / g
+
+@njit
+def g1_possible(t, d, g, lmr):
+    '''return the latest time at which server g may become available for
+    it to b possible that d droplets have been computed by time
+    t. assumes g-1 servers became available at time 0.
+
+    '''
+    return (t*lmr['nservers'] - d*lmr['dropletc']) / (lmr['nservers']-g+1)
+    # return (d*lmr['dropletc'] - t*lmr['nservers']) / (g-lmr['nservers'])
 
 @njit
 def g2_deadline(t, t1, d, g1, g2, lmr):
@@ -393,6 +405,215 @@ def bound3(t, d=None, lmr=None):
     print('t/result', t, result)
     return result
 
+def bound4(t, d=None, lmr=None):
+    '''the probability that d droplets have been computed and wait_for
+    servers have become available at time t is greater than this.
+
+    '''
+    result = 0.0
+    eps = np.finfo(float).eps
+    t1 = -1
+    for g in range(1, lmr['nservers']+1):
+
+        # probability that server g becomes available in the
+        # guaranteed success region
+        t2 = g1_deadline(t, d, g, lmr)
+        v = 0
+        if t2 > 0:
+            v += stats.order_cdf_shiftexp(
+                t2+lmr['straggling'],
+                total=lmr['nservers'],
+                order=g,
+                parameter=lmr['straggling'],
+            )
+        if t1 > 0:
+            v -= stats.order_cdf_shiftexp(
+                t1+lmr['straggling'],
+                total=lmr['nservers'],
+                order=g,
+                parameter=lmr['straggling'],
+            )
+        if g < lmr['wait_for']:
+            v *= stats.order_cdf_shiftexp(
+                t-t2+lmr['straggling'],
+                total=lmr['nservers']-g,
+                order=lmr['wait_for']-g,
+                parameter=lmr['straggling']
+            )
+
+        # probability that server g+1 becomes available in the part of
+        # the maybe region where server g+1 can be save it
+        # t3 = g1_deadline(t, d, g+1, lmr)
+        # if t3 > 0 and g < lmr['nservers']:
+        #     v = stats.order_cdf_shiftexp(
+        #         t3+lmr['straggling'],
+        #         total=lmr['nservers'],
+        #         order=g,
+        #         parameter=lmr['straggling'],
+        #     )
+        #     if t2 > 0:
+        #         v -= stats.order_cdf_shiftexp(
+        #             t2+lmr['straggling'],
+        #             total=lmr['nservers'],
+        #             order=g,
+        #             parameter=lmr['straggling'],
+        #         )
+        #     v *= stats.order_cdf_shiftexp(
+        #         t3+lmr['straggling'],
+        #         total=lmr['nservers'],
+        #         order=g+1,
+        #         parameter=lmr['straggling'],
+        #     )
+        #     result += v
+
+        t1 = t2
+        result += v
+        # print(f'result={result}, t1={t1}, t2={t2}')
+        if 1-result <= eps:
+            break
+
+    return result
+
+def ubound4(t, d=None, lmr=None):
+    '''upper bound the probability that d droplets have been computed and
+    wait_for servers have become available at time t.
+
+    '''
+    failure = 1.0
+    for g1 in range(1, lmr['nservers']):
+        for g2 in range(g1+1, min(g1+10, lmr['nservers'])):
+            t2 = min(g2_deadline(t, 0, d, g1, g2, lmr), t)
+            # assert t2 <= t, f'{t2}, {t}'
+            if t2 < 0:
+                continue
+            v = stats.order_cdf_shiftexp(
+                t2+lmr['straggling'],
+                total=lmr['nservers']-g1,
+                order=g2-g1,
+                parameter=lmr['straggling'],
+            )
+            if g2 < lmr['wait_for']:
+                v *= stats.order_cdf_shiftexp(
+                    t-t2+lmr['straggling'],
+                    total=lmr['nservers']-g2,
+                    order=lmr['wait_for']-g2,
+                    parameter=lmr['straggling'],
+                )
+            failure -= v
+
+    return failure
+
+def ubound5_inner(t1, t=None, d=None, g1=None, lmr=None):
+    result = stats.order_pdf_shiftexp(
+        t1+lmr['straggling'],
+        total=lmr['nservers'],
+        order=g1,
+        parameter=lmr['straggling'],
+    )
+
+    # probabilty that next
+    t2 = g2_deadline(t, t1, d, g1, g1+1, lmr)
+    if t2 < t1:
+        return 0.0
+    result *= (1 - stats.order_cdf_shiftexp(
+        t2-t1+lmr['straggling'],
+        total=lmr['nservers']-g1,
+        order=1,
+        parameter=lmr['straggling'],
+    ))
+    return result
+
+def ubound5(t, d=None, lmr=None):
+    '''upper bound the probability that d droplets have been computed and
+    wait_for servers have become available at time t.
+
+    '''
+    failure = 0.0
+    t_fail_guaranteed = g1_deadline(t, d, lmr['nservers'], lmr)
+    if t_fail_guaranteed < 0:
+        return 1.0
+    for g1 in range(1, lmr['nservers']):
+        failure += (1-stats.order_cdf_shiftexp(
+            t_fail_guaranteed+lmr['straggling'],
+            total=lmr['nservers'],
+            order=g1,
+            parameter=lmr['straggling'],
+        ))
+        t_fail_possible = max(g1_deadline(t, d, g1, lmr), 0)
+        f = partial(
+            ubound5_inner,
+            t=t,
+            d=d,
+            g1=g1,
+            lmr=lmr,
+        )
+        v, abserr = integrate.quad(f, t_fail_possible, t_fail_guaranteed)
+        if np.isnan(v):
+            continue
+        failure += v
+
+    return failure
+
+def bound6(t, d=None, lmr=None):
+    '''the probability that d droplets have been computed and q servers
+    become available at time t is smaller than this.
+
+    '''
+    success = stats.order_cdf_shiftexp(
+        t+lmr['straggling'],
+        total=lmr['nservers'],
+        order=lmr['wait_for'],
+        parameter=lmr['straggling'],
+    )
+    success2 = 0.0
+    for g in range(1, lmr['nservers']):
+        t1 = g1_possible(t, d, g, lmr)
+        if t1 < 0:
+            continue
+        v = stats.order_cdf_shiftexp(
+            t1+lmr['straggling'],
+            total=lmr['nservers'],
+            order=g,
+            parameter=lmr['straggling'],
+        )
+        success2 += v
+
+    # if success < success2:
+    #     print('success')
+    # else:
+    #     print('success2')
+    return min(success, success2)
+
+def bound6_new(t, d=None, lmr=None):
+    '''the probability that d droplets have been computed and q servers
+    become available at time t is smaller than this.
+
+    '''
+    # result = 1.0
+    result = 0.0
+    for g in range(1, lmr['nservers']):
+        t1 = g1_possible(t, d, g, lmr)
+        if t1 < 0:
+            # result = 0.0
+            # break
+            continue
+        v = stats.order_cdf_shiftexp(
+            t1+lmr['straggling'],
+            total=lmr['nservers'],
+            order=g,
+            parameter=lmr['straggling'],
+        )
+        if g < lmr['wait_for']:
+            v *= stats.order_cdf_shiftexp(
+                t-t1+lmr['straggling'],
+                total=lmr['nservers']-g,
+                order=lmr['wait_for']-g,
+                parameter=lmr['straggling'],
+            )
+        # result = min(result, v)
+        result += v
+    return result
+
 def mean_delay(lmr, d):
     '''return the mean delay until d droplets have been computed in total
     and lmr['wait_for'] servers have become available.
@@ -426,6 +647,67 @@ def mean_delay3(lmr, d):
         ytol=math.inf,
     )
 
+def mean_delay4(lmr, d):
+    '''return the mean delay until d droplets have been computed in total
+    and lmr['wait_for'] servers have become available.
+
+    '''
+    return pynumeric.cnuminv(
+        partial(
+            bound4,
+            d=d,
+            lmr=lmr,
+        ),
+        target=1/2,
+        tol=None,
+        xtol=1e-1,
+        ytol=math.inf,
+    )
+
+def mean_delay6(lmr, d):
+    return pynumeric.cnuminv(
+        partial(
+            bound6,
+            d=d,
+            lmr=lmr,
+        ),
+        target=1/2,
+        tol=None,
+        xtol=1e-1,
+        ytol=math.inf,
+    )
+
+def mean_delaym(lmr, d):
+    '''return the mean delay until d droplets have been computed in total
+    and lmr['wait_for'] servers have become available.
+
+    '''
+    x1 = pynumeric.cnuminv(
+        partial(
+            # bound4,
+            cdf_q_bound,
+            d=d,
+            lmr=lmr,
+        ),
+        target=1/2,
+        tol=None,
+        xtol=1e-1,
+        ytol=math.inf,
+    )
+    x2 = pynumeric.cnuminv(
+        partial(
+            bound6,
+            d=d,
+            lmr=lmr,
+        ),
+        target=1/2,
+        tol=None,
+        xtol=1e-1,
+        ytol=math.inf,
+    )
+    print(f'x1={x1}, x2={x2}, avg={(x1+x2)/2}')
+    return (x1+x2) / 2
+
 def plot_cdf():
     '''plot the cdf of the following two events:
 
@@ -438,7 +720,7 @@ def plot_cdf():
 
     # time needed to get the droplets
     # lmr = lmr1()
-    lmr = get_parameters_workload()[-1]
+    lmr = get_parameters_workload()[0]
     num_droplets = lmr['nrows']/lmr['droplet_size']*lmr['nvectors']
     t = delay.delay_estimate(num_droplets, lmr)
 
@@ -455,28 +737,50 @@ def plot_cdf():
     x_q = np.concatenate((x1_q, x2_q))
 
     # simulated
-    cdf = delay_cdf_sim(x, num_droplets, lmr)
+    # cdf = delay_cdf_sim(x, num_droplets, lmr)
     # plt.semilogy(x, 1-cdf, label='simulation')
-    plt.loglog(x, 1-cdf, label='Simulation')
+    # plt.loglog(x, 1-cdf, label='Simulation')
 
     cdf_q = delay_q_cdf_sim(x_q, num_droplets, lmr)
     # plt.semilogy(x, 1-cdf, label='simulation')
-    plt.loglog(x_q, 1-cdf_q, label='Simulation (q)')
+    plt.plot(x_q, 1-cdf_q, 'k.', label='Simulation')
 
     # bounds
-    x1 = np.linspace(t/r2, t*r1, 100)
-    x2 = np.linspace(t*r1, t*r2, 100)
-    x = np.concatenate((x1, x2))
-    cdf = np.fromiter((cdf_bound(t, num_droplets, lmr) for t in x), dtype=float)
-    plt.loglog(x, 1-cdf, 'k-', label='Upper Bound')
+    xmin, xmax = 0, 0.8*1e9
+    x = np.linspace(xmin, xmax, 100)
+    # x1 = np.linspace(t/r2, t*r1, 100)
+    # x2 = np.linspace(t*r1, t*r2, 100)
+    # x = np.concatenate((x1, x2))
 
-    cdf_q = np.fromiter((cdf_q_bound(t, num_droplets, lmr) for t in x), dtype=float)
-    plt.loglog(x, 1-cdf_q, 'm--', label='Upper Bound (q)')
+    lower = np.fromiter((bound6(t, d=num_droplets, lmr=lmr) for t in x), dtype=float)
+    plt.plot(x, 1-lower, 'm--', label='Lower Bound')
+
+    # cdf = np.fromiter((cdf_bound(t, num_droplets, lmr) for t in x), dtype=float)
+    # plt.loglog(x, 1-cdf, 'k-', label='Upper Bound')
+
+    upper = np.fromiter((cdf_q_bound(t, num_droplets, lmr) for t in x), dtype=float)
+    plt.plot(x, 1-upper, 'r--', label='Upper Bound')
+
+    upper2 = np.fromiter((bound4(t, num_droplets, lmr) for t in x), dtype=float)
+    plt.plot(x, 1-upper2, 'b--', label='Upper Bound 2')
 
     # x = np.linspace(t*r1, t*r2, 2)[:2]
-    cdf_3 = np.fromiter((bound3(t, d=num_droplets, lmr=lmr) for t in x), dtype=float)
-    plt.loglog(x, 1-cdf_3, 'g:', label='Bound3')
-    print(cdf_3)
+    # cdf_3 = np.fromiter((bound3(t, d=num_droplets, lmr=lmr) for t in x), dtype=float)
+    # plt.loglog(x, 1-cdf_3, 'g:', label='Bound3')
+    # print(cdf_3)
+
+    # cdf4 = np.fromiter((bound4(t, d=num_droplets, lmr=lmr) for t in x), dtype=float)
+    # plt.loglog(x, 1-cdf4, 'g:', label='Bound4')
+    # print(cdf4)
+
+    # ucdf4 = np.fromiter((ubound4(t, d=num_droplets, lmr=lmr) for t in x), dtype=float)
+    # plt.loglog(x, ucdf4, 'g:', label='ucdf4')
+    # print(ucdf4)
+
+    # mean of upper and lower bound cdf
+    # ucdfm = (2-cdf4-cdf6)/2
+    # plt.loglog(x, ucdfm, 'k--', label='ucdfm')
+    # print(ucdfm)
 
     # plot average
     # avg = mean_delay(lmr, num_droplets)
@@ -484,11 +788,12 @@ def plot_cdf():
     # plt.loglog([avg, avg], [cdf_q.max(), cdf_q.min()])
 
     # plt.xlim((1e8, 1e11))
-    plt.ylim((1e-7, 1))
+    plt.ylim((1e-1, 1))
+    plt.xlim((xmin, xmax))
     plt.grid(True)
     plt.legend()
     plt.xlabel(r'$t$')
-    plt.ylabel(r'$\Pr(\rm{Delay} > t$)')
+    plt.ylabel(r'$\Pr(T > t$)')
     plt.tight_layout()
     # plt.savefig('./plots/180820/bound.png', dpi='figure', bbox_inches='tight')
     plt.show()
@@ -499,17 +804,17 @@ def plot_mean():
     function inversion.
 
     '''
-    lmrs = get_parameters_workload()[-3:]
-    # lmrs = get_parameters_straggling()
+    # lmrs = get_parameters_workload()
+    lmrs = get_parameters_straggling()
     for lmr in lmrs:
         d = lmr['nrows']/lmr['droplet_size']*lmr['nvectors']
         avg_inv = delay.delay_mean(lmr, overhead=1.0, d_tot=d)
         avg_cdf = mean_delay(lmr, d)
-        avg_3 = mean_delay3(lmr, d)
-        # avg_3 = 684135424.0
+        avg_m = mean_delaym(lmr, d)
         avg_emp = delay.delay_mean_empiric(lmr, d_tot=d)
+        # avg_6 = mean_delay6(lmr, d)
         print(lmr)
-        print('emp/inv/cdf/3', avg_emp, avg_inv, avg_cdf, avg_3, avg_cdf/avg_inv, avg_3/avg_inv, avg_cdf/avg_emp, avg_3/avg_emp)
+        print('emp/inv/cdf/m', avg_emp, avg_inv, avg_cdf, avg_m, avg_cdf/avg_inv, avg_m/avg_inv, avg_cdf/avg_emp, avg_m/avg_emp)
         print()
 
 @njit
