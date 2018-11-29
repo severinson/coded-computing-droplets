@@ -1,8 +1,4 @@
-'''Code relating to the performance of Liquid MapReduce
-
-- Load simulation
-- Mean delay should be such that each server has d droplets. This makes more sense.
-- Mean delay assuming randomly selected computations.
+'''Code for simulating the performance of the system.
 
 '''
 
@@ -62,7 +58,7 @@ import unittest
 class Tests(unittest.TestCase):
 
     def lmr1(self):
-        return lmr_factory(
+        return typedefs.lmr_factory(
             nservers=100,
             nrows=100,
             ncols=100,
