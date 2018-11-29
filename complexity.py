@@ -1,4 +1,4 @@
-'''Complexity computations for droplet-based schemes.
+'''Decoding complexity for various codes.
 
 '''
 
