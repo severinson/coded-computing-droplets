@@ -7,11 +7,7 @@ project take a struct of this kind as its argument.
 
 import math
 import numpy as np
-
-# arithmetic complexity
-WORD_SIZE = 8
-ADDITIONC = WORD_SIZE/64
-MULTIPLICATIONC = WORD_SIZE*math.log2(WORD_SIZE)
+import complexity
 
 # dtype containing system parameters
 lmr_dtype = np.dtype([
@@ -54,13 +50,13 @@ def lmr_factory(nservers:int=None,
         wait_for = int(round(nservers/2))
 
     droplets_per_server = ndroplets / nservers
-    a = (ncols - 1) * ADDITIONC
-    m = ncols * MULTIPLICATIONC
+    a = (ncols - 1) * complexity.ADDITIONC
+    m = ncols * complexity.MULTIPLICATIONC
     dropletc = (a+m)*droplet_size
     ncrows = ndroplets * droplet_size
     code_rate = nrows / ncrows
     straggling = nrows*ncols*nvectors/nservers
-    straggling *= ADDITIONC + MULTIPLICATIONC
+    straggling *= complexity.ADDITIONC + complexity.MULTIPLICATIONC
     straggling *= straggling_factor
     decodingc = 0 # computed after instantitation
     lmr = np.array([(
