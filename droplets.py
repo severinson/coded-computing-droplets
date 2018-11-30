@@ -26,14 +26,19 @@ def simulate(f, lmrs, cache=None, rerun=False):
     '''
     if isinstance(cache, str) and not rerun:
         try:
-            return pd.read_csv(cache+'.csv')
+            filename = cache+'.csv'
+            df = pd.read_csv(filename)
+            logging.info(f'loaded cache {filename}')
+            return df
         except:
             pass
     logging.info('simulating {} lmrs'.format(len(lmrs)))
     df = pd.DataFrame([typedefs.dct_from_lmr(lmr) for lmr in lmrs])
     df['delay'] = pool.map(f, lmrs)
     if isinstance(cache, str):
-        df.to_csv(cache+'.csv', index=False)
+        filename = cache+'.csv'
+        df.to_csv(filename, index=False)
+        logging.info(f'caching {filename}')
     return df
 
 def set_wait_for(lmr=None, overhead=None):
