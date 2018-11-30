@@ -15,7 +15,6 @@ def optimize_q_bdc(lmr, num_partitions):
     def f(q):
         nonlocal lmr
         q = q[0]
-        # q = int(round(q[0]))
 
         # enforce bounds
         if q > lmr['nservers']:
@@ -46,7 +45,6 @@ def optimize_q_bdc(lmr, num_partitions):
     result = minimize(
         f,
         x0=lmr['nservers']-1,
-        # bounds=[(1, lmr.nservers)],
         method='Powell',
     )
     wait_for = int(result.x.round())
@@ -68,13 +66,10 @@ def optimize_bdc(lmr):
     min_T = None
     max_T = int(round(lmr['nrows'] / lmr['droplet_size']))
     for T in range(int(round(max_T*0.9)), max_T+1):
-        # if lmr.ndroplets % T != 0:
-        #     continue
         q, d = optimize_q_bdc(lmr, T)
         if d < min_d:
             min_d = d
             min_q = q
             min_T = T
 
-    # print('T={}, q={} is optimal for lmr {}'.format(min_T, min_q, lmr))
     return min_q, min_d
