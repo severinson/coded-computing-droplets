@@ -20,6 +20,7 @@ def set_wait_for(lmr=None, overhead=None, decodingf=None, wait_for=None):
 
     '''
     def f(q):
+        q = q[0]
         nonlocal lmr, overhead, decodingf
         if q > lmr['nservers']:
             return q * 1e32
@@ -29,14 +30,14 @@ def set_wait_for(lmr=None, overhead=None, decodingf=None, wait_for=None):
             lmr=lmr,
             overhead=overhead,
             decodingf=decodingf,
-            wait_for=int(math.floor(q[0])),
+            wait_for=int(math.floor(q)),
         )
         d1 = delay.delay_mean(lmr, overhead=overhead)
         set_wait_for(
             lmr=lmr,
             overhead=overhead,
             decodingf=decodingf,
-            wait_for=int(math.ceil(q[0])),
+            wait_for=int(math.ceil(q)),
         )
         d2 = delay.delay_mean(lmr, overhead=overhead)
         result = d1 * (math.ceil(q)-q) + d2 * (q-math.floor(q))
