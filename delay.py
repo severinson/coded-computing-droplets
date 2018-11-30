@@ -56,14 +56,12 @@ def delay_classical(lmr):
 def delay_mean_empiric(lmr, overhead=1.1, d_tot=None, n=100):
     '''return the simulated mean delay of the map phase, i.e., the average
     delay until d droplets have been computed and wait_for servers
-    have become available.
-
-    assumes that droplet are computed in optimal order. does not take
-    decoding delay into account.
+    have become available. assumes that droplets are computed in
+    optimal order.
 
     '''
     if d_tot is None:
-        d_tot = lmr.nrows*lmr.nvectors/lmr.droplet_size*overhead
+        d_tot = lmr['nrows']*lmr['nvectors']/lmr['droplet_size']*overhead
     result = 0.0
     max_drops = lmr['droplets_per_server']*lmr['nvectors']
     if max_drops * lmr['nservers'] < d_tot:
@@ -78,19 +76,22 @@ def delay_mean_empiric(lmr, overhead=1.1, d_tot=None, n=100):
         ).sum()
         t_droplets = pynumeric.cnuminv(f, d_tot, tol=dropletc)
         result += max(t_servers, t_droplets)
-    return result/n
+
+    # average and add decoding delay
+    result /= n
+    result += lmr['decodingc']
+    return result
 
 def delay_mean_centralized(lmr, overhead=1.1):
     '''Return the mean delay when there is a central reducer, i.e., a
     single master node that does all decoding.
 
     '''
-    d_per_vector = lmr.nrows/lmr.droplet_size*overhead
+    d_per_vector = lmr['nrows']/lmr['droplet_size']*overhead
     t_decoding = delay_estimate(d_per_vector, lmr)
-    t_decoding += lmr.decodingc*lmr.wait_for
-    t_droplets = delay_estimate(d_per_vector*lmr.nvectors, lmr)
-    t_droplets += lmr.decodingc*lmr.wait_for/lmr.nvectors
-    # print('t_decoding/t_droplets', t_decoding, t_droplets, t_decoding/t_droplets, lmr.wait_for)
+    t_decoding += lmr['decodingc']*lmr['wait_for']
+    t_droplets = delay_estimate(d_per_vector*lmr['nvectors'], lmr)
+    t_droplets += lmr['decodingc']*lmr['wait_for']/lmr['nvectors']
     return max(t_decoding, t_droplets)
 
 @njit
