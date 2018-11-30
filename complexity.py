@@ -60,7 +60,7 @@ def lt_complexity(lmr, reloverhead=1.3):
     1000.
 
     '''
-    K = lmr.nrows/lmr.droplet_size
+    K = lmr['nrows']/lmr['droplet_size']
     if not 900 <= K <= 1100:
         logging.warning('K={} too far from 1000'.format(K))
         return math.inf
@@ -73,8 +73,8 @@ def lt_complexity(lmr, reloverhead=1.3):
         raise ValueError('no data for reloverhead={}'.format(reloverhead))
     a = tbl[reloverhead]*K
     m = a
-    a *= lmr.droplet_size*ADDITIONC
-    m *= lmr.droplet_size*MULTIPLICATIONC
+    a *= lmr['droplet_size']*ADDITIONC
+    m *= lmr['droplet_size']*MULTIPLICATIONC
     return a+m
 
 def rq_complexity(lmr, reloverhead=1.02):
