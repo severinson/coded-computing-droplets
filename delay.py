@@ -209,57 +209,6 @@ def delay_mean(lmr, overhead=1.0, d_tot=0):
         result += pdf[i] * (rv.mean() - lmr['straggling'])
     return result + lmr['decodingc']
 
-def drops_estimate(t, lmr=None):
-    '''Return an approximation of the number of droplets computed at time
-    t. The inverse of time_estimate.
-
-    '''
-    v = -2*lmr.straggling
-    v -= lmr.dropletc
-    v += (2*lmr.straggling+lmr.dropletc)*math.exp(-t/lmr.straggling)
-    v += 2*t
-    v /= 2*lmr.dropletc
-    return max(lmr.nservers*v, 0)
-
-def drops_lower(t, lmr):
-    '''Return a lower bound on the average number of droplets computed at
-    time t.
-
-    '''
-    v = lmr.straggling
-    v += lmr.dropletc
-    v -= t
-    v -= (lmr.straggling+lmr.dropletc)*math.exp(-t/lmr.straggling)
-    v /= lmr.dropletc
-    v *= -1
-    return max(lmr.nservers*v, 0)
-
-def drops_upper(t, lmr):
-    '''Return an upper bound on the average number of droplets computed at
-    time t.
-
-    '''
-    v = lmr.straggling * (math.exp(-t/lmr.straggling)-1)
-    v += t
-    v /= lmr.dropletc
-    return max(lmr.nservers*v, 0)
-
-def drops_empiric(t, lmr, n=100):
-    '''Return the average number of droplets computed at time t. Result
-    due to simulations.
-
-    '''
-    result = 0
-    max_drops = lmr.droplets_per_server*lmr.nvectors
-    # max_drops = math.inf
-    dropletc = lmr.dropletc # cache this value
-    for _ in range(n):
-        a = delays(t, lmr)
-        result += np.floor(
-            np.minimum(np.maximum((t-a)/dropletc, 0), max_drops)
-        ).sum()
-    return result/n
-
 @jit(forceobj=True)
 def delay_estimate(d_tot, lmr):
     '''Return an approximation of the delay t at which d droplets have
@@ -276,68 +225,6 @@ def delay_estimate(d_tot, lmr):
     Warg /= -2*lmr['straggling']
     t += lmr['straggling'] * lambertw(Warg)
     return np.real(t)
-
-def delay_lower(d, lmr):
-    '''Return a lower bound on the average amount of time required to
-    compute d droplets.
-
-    '''
-    t = lmr.straggling
-    t += d*lmr.dropletc/lmr.nservers
-    earg = d*lmr.dropletc
-    earg /= -lmr.straggling*lmr.nservers
-    earg -= 1
-    Warg = -math.exp(earg)
-    t += lmr.straggling*lambertw(Warg)
-    return np.real(t)
-
-def delay_upper(d, lmr):
-    '''Return an upper bound on the average amount of time required to
-    compute d droplets.
-
-    '''
-    t = lmr.straggling
-    t += d*lmr.dropletc/lmr.nservers
-    t += lmr.dropletc
-    earg = d*lmr.dropletc
-    earg += lmr.nservers*(lmr.straggling+lmr.dropletc)
-    earg /= -lmr.nservers*lmr.straggling
-    Warg = math.exp(earg) * (lmr.straggling+lmr.dropletc)
-    Warg /= -lmr.straggling
-    t += lmr.straggling * lambertw(Warg)
-    return np.real(t)
-
-def delay_lower2(d, lmr):
-    '''Lower bound on the average delay required to compute d
-    droplets. Based on solving for t and averaging over the initial
-    delay.
-
-    '''
-    return (d*lmr.dropletc + lmr.straggling) / lmr.nservers
-
-def delay_upper2(d, lmr):
-    '''Upper bound on the average delay required to compute d
-    droplets. Based on solving for t and averaging over the initial
-    delay.
-
-    '''
-    v = d/lmr.nservers + 1
-    v *= lmr.dropletc
-    v += lmr.straggling
-    return v
-
-def delay_lower3(d, lmr):
-    '''Lower bound on the average delay required to compute d
-    droplets. Takes into account the non-linearity.
-
-    '''
-    pdf = server_pdf(t, lmr)
-
-def delay_estimate_error(t, lmr):
-    '''Return an upper bound on the average error of delay_estimate.
-
-    '''
-    return lmr.nservers * (1-math.exp(-t/lmr.straggling))/2
 
 @njit
 def delays(t, lmr, out=None):
