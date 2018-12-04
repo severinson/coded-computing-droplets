@@ -17,13 +17,11 @@ from typedefs import lmr_factory
 from functools import partial
 
 r10_plot_string = 'b-o'
-r10d11_plot_string = 'g-v'
-rq_plot_string = 'g-^'
 lt_plot_string = 'm-d'
 bdc_plot_string = 'c-^'
 centralized_plot_string = 'r-s'
 ideal_plot_string = 'k-'
-classical_plot_string = 'g:'
+mds_plot_string = 'g:'
 
 def find_parameters(
         nservers,
@@ -189,6 +187,19 @@ def simulate_mds(lmrs):
     )
     return df
 
+def simulate_lt(lmrs):
+    for lmr in lmrs:
+        decodingf = partial(complexity.lt_complexity, reloverhead=1.3)
+        optimize.set_wait_for(
+            lmr=lmr,
+            overhead=1.3,
+            decodingf=decodingf,
+        )
+    return droplets.simulate(
+        partial(delay.delay_mean, overhead=1.3),
+        lmrs,
+    )
+
 def simulate_bdc(lmrs, cache=None):
     # BDC
     print('BDC')
@@ -353,7 +364,7 @@ def workload_plot():
     cache_prefix = 'workload_'
 
     # get parameters to simulate
-    lmrs = get_parameters_workload()[:5]
+    lmrs = get_parameters_workload()[:10]
 
     # run simulations
     uncoded = droplets.simulate(delay.delay_uncoded, lmrs)
@@ -382,13 +393,12 @@ def workload_plot():
     )
     r10_opt['delay'] /= uncoded['delay']
 
-    # lt_cent = simulate_centralized_lt(lmrs)
-    # lt_cent['delay'] /= uncoded['delay']
-
     r10_cent = simulate_centralized_r10(lmrs)
     r10_cent['delay'] /= uncoded['delay']
 
-    # ideal rateless code
+    lt = simulate_lt(lmrs)
+    lt['delay'] /= uncoded['delay']
+
     ideal = simulate_ideal(lmrs)
     ideal['delay'] /= uncoded['delay']
 
@@ -403,14 +413,6 @@ def workload_plot():
         label='R10',
     )
     plt.plot(
-        r10_rr['nservers'], r10_rr['delay'],
-        '--',
-        markevery=0.2,
-        markerfacecolor='none',
-        markeredgewidth=1.0,
-        label='R10 sim. (rr)',
-    )
-    plt.plot(
         r10_opt['nservers'], r10_opt['delay'],
         # '--',
         markevery=0.2,
@@ -419,26 +421,20 @@ def workload_plot():
         label='R10 sim. (opt)',
     )
     plt.plot(
-        bdc['nservers'], bdc['delay'],
-        bdc_plot_string,
-        markevery=0.2,
-        label='BDC [6]',
-    )
-    plt.plot(
-        mds['nservers'], mds['delay'],
-        classical_plot_string,
+        r10_rr['nservers'], r10_rr['delay'],
+        '--',
         markevery=0.2,
         markerfacecolor='none',
         markeredgewidth=1.0,
-        label='Classical [4]',
+        label='R10 sim. (rr)',
     )
     plt.plot(
-        r10_cent['nservers'], r10_cent['delay'],
-        # classical_plot_string,
+        lt['nservers'], lt['delay'],
+        lt_plot_string,
         markevery=0.2,
         markerfacecolor='none',
         markeredgewidth=1.0,
-        label='R10 cent.',
+        label='LT',
     )
     plt.plot(
         ideal['nservers'], ideal['delay'],
@@ -447,6 +443,30 @@ def workload_plot():
         markerfacecolor='none',
         markeredgewidth=1.0,
         label='Ideal Rateless.',
+    )
+    plt.plot(
+        bdc['nservers'], bdc['delay'],
+        bdc_plot_string,
+        markevery=0.2,
+        markerfacecolor='none',
+        markeredgewidth=1.0,
+        label='BDC [6]',
+    )
+    plt.plot(
+        r10_cent['nservers'], r10_cent['delay'],
+        centralized_plot_string,
+        markevery=0.2,
+        markerfacecolor='none',
+        markeredgewidth=1.0,
+        label='Cent. R10',
+    )
+    plt.plot(
+        mds['nservers'], mds['delay'],
+        mds_plot_string,
+        markevery=0.2,
+        markerfacecolor='none',
+        markeredgewidth=1.0,
+        label='MDS [4]',
     )
     plt.grid(linestyle='--')
     plt.legend(framealpha=1, labelspacing=0.1, columnspacing=0.1, ncol=1, loc='best')
