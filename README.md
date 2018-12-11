@@ -5,7 +5,7 @@ Code for generating the numerical results of our paper [A Droplet Approach Based
 This code is published under the [Apache 2.0 license](https://www.apache.org/licenses/LICENSE-2.0). However, if you use this code for another work you need to cite us using the bibtex information below.
 ```
 @inproceedings{Severinson18,
-author = {Albin Severinson and Alexandre {Graell i Amat} and Eirik Rosnes and Francisco Lazaro and Gianluigi Liva},
+author = {Albin Severinson and Alexandre {Graell i Amat} and Eirik Rosnes and Francisco L{\'a}zaro and Gianluigi Liva},
 title = {A Droplet Approach Based on Raptor Codes for Distributed Computing With Straggling Servers},
 booktitle = Proc.~IEEE Int.~Symp.~Turbo Codes {\&} Iterative Inf.~Processing,
 address = {Hong Kong},
