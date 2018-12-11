@@ -26,6 +26,7 @@ import scipy.stats
 import matplotlib.pyplot as plt
 
 from scipy.special import gamma, gammainc
+from numba import jit, njit
 
 def order_sample(icdf=None, total=None, order=None):
     '''Sample the order statistic.
@@ -74,8 +75,8 @@ def order_mean_empiric(icdf, total, order, samples=1000):
     variance = statistics.variance(samples, xbar=mean)
     return mean, variance
 
-@functools.lru_cache(maxsize=1024)
-def order_mean_shiftexp(total, order, parameter=1):
+@njit
+def order_mean_shiftexp(total=None, order=None, parameter=None):
     '''Compute the mean of the shifted exponential order statistic.
 
     Args:
@@ -91,19 +92,19 @@ def order_mean_shiftexp(total, order, parameter=1):
 
     '''
     if total % 1 != 0:
-        raise ValueError("total={} must be an integer".format(total))
+        raise ValueError("total must be integer")
     if order % 1 != 0:
-        raise ValueError("order={} must be an integer".format(order))
+        raise ValueError("order must be integer")
     total, order = int(total), int(order)
-    mean = 1
+    mean = 1.0
     for i in range(total-order+1, total+1):
         mean += 1 / i
 
     mean *= parameter
     return mean
 
-@functools.lru_cache(maxsize=1024)
-def order_variance_shiftexp(total, order, parameter):
+@njit
+def order_variance_shiftexp(total=None, order=None, parameter=None):
     '''Compute the variance of the shifted exponential order statistic.
 
     Args:
@@ -118,14 +119,19 @@ def order_variance_shiftexp(total, order, parameter):
     the shifted exponential distribution.
 
     '''
-    variance = 0
+    if total % 1 != 0:
+        raise ValueError("total must be integer")
+    if order % 1 != 0:
+        raise ValueError("order must be integer")
+    total, order = int(total), int(order)
+    variance = 0.0
     for i in range(total-order+1, total+1):
         variance += 1 / math.pow(i, 2)
 
     variance *= math.pow(parameter, 2)
     return variance
 
-@functools.lru_cache(maxsize=1024)
+@jit(forceobj=True)
 def order_cdf_shiftexp(value, total=None, order=None, parameter=None):
     '''CDF of the shifted exponential order statistic.
 
@@ -139,20 +145,65 @@ def order_cdf_shiftexp(value, total=None, order=None, parameter=None):
 
     parameter: Distribution parameter.
 
-    returns: the CDF of the shifted exponential order statistic evaluated at
-    value.
+    returns: the CDF of the shifted exponential order statistic
+    evaluated at value.
 
     '''
-    assert 0 <= value <= math.inf
+    if total % 1 != 0:
+        raise ValueError("total must be integer")
+    if order % 1 != 0:
+        raise ValueError("order must be integer")
+    if not 0 <= value <= math.inf:
+        raise ValueError("CDF only valid for 0 <= x < inf")
     if value < parameter:
-        return 0
+        return 0.0
+    total, order = int(total), int(order)
     a = order_mean_shiftexp(total, order, parameter) - parameter
     a /= order_variance_shiftexp(total, order, parameter)
     b = pow(order_mean_shiftexp(total, order, parameter) - parameter, 2)
     b /= order_variance_shiftexp(total, order, parameter)
 
-    # the CDF is given by the regularized lower incomplete gamma function.
-    return gammainc(b, a*(value-parameter))
+    # gamma CDF. gammainc is the regularized lower incomplete gamma function.
+    result = gammainc(b, a*(value-parameter))
+    return np.float64(result) # help the type inference
+
+def order_pdf_shiftexp(value, total=None, order=None, parameter=None):
+    '''PDF of the shifted exponential order statistic.
+
+    args:
+
+    value: value to evaluate the PDF at.
+
+    total: Total number of variables.
+
+    order: Statistic order.
+
+    parameter: Distribution parameter.
+
+    returns: the PDF of the shifted exponential order statistic
+    evaluated at value.
+
+    '''
+    if total % 1 != 0:
+        raise ValueError("total must be integer")
+    if order % 1 != 0:
+        raise ValueError("order must be integer")
+    if not 0 <= value <= math.inf:
+        raise ValueError("CDF only valid for 0 <= x < inf")
+    if value < parameter:
+        return 0
+    total, order = int(total), int(order)
+    a = order_mean_shiftexp(total, order, parameter) - parameter
+    a /= order_variance_shiftexp(total, order, parameter)
+    b = pow(order_mean_shiftexp(total, order, parameter) - parameter, 2)
+    b /= order_variance_shiftexp(total, order, parameter)
+    value -= parameter
+    result = b*np.log(a)
+    result += (b-1)*np.log(value)
+    result -= a*value
+    result -= np.log(gamma(b))
+    result = math.exp(result)
+    return np.float64(result)
 
 def order_aggregate_cdf_shiftexp(value, parameter=None, total=None,
                                  orders=None, order_probabilities=None):
