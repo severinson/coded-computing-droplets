@@ -1,0 +1,29 @@
+- d(t) gives the average number of droplets computed over the K
+  servers at time t.
+- Inverting d(t) gives the time at which, on average, d droplets have
+  been computed, i.e., t(d_bar).
+- In the theorem we write that t is the average time required to
+  compute d droplets, which may be incorrect.
+- However, t(d_bar) predicts the simulations very well. The numerical
+  results indicate that t(d_bar) is what we want. Is the issue purely
+  in the formulation of the theorem?
+- We state that theorem 2 is the average delay. It's the sum of the
+  delay due to computing the droplets, waiting for the q-th servers
+  and decoding. Which of these do we need?
+  - The average amount of time needed to compute d droplets.
+  - The time at which, on average, d droplets have been computed.
+- Could it be that they're the same? It's possible but it's not true
+  in general and we haven't shown that it's the case in this instance.
+- We can compute t_bar(d) by going through the server PDF
+  somehow. However, the server PDF is a function of t. Perhaps we can
+  compute it numerically to check if the strategy is correct? I think
+  it becomes a fixed-point problem, i.e., find t such that t=f(t).
+
+
+- BDC: delay.delay_mean_simulated
+- R10 approximation: delay.delay_mean
+- R10 simulated, rr: delay.delay_mean_simulated
+- MDS: delay.delay_classical
+- Centralized: delay.delay_mean_centralized
+- Ideal rateless: delay.delay_mean
+- R10 simulated, optimal: delay.delay_mean_empiric
