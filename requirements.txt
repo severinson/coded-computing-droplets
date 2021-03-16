@@ -1,8 +1,7 @@
-pip
 numpy
 scipy
 pandas
 numba
 matplotlib
 diskcache
-https://github.com/severinson/pynumeric/archive/master.zip
+pynverse

@@ -354,8 +354,6 @@ def straggling_plot():
     plt.legend(framealpha=1, labelspacing=0.1, columnspacing=0.1, ncol=1, loc='best')
     plt.ylabel('$D$')
     plt.xlabel('$K$')
-    plt.xlim(0, 600)
-    plt.ylim(0.2, 0.7)
     plt.show()
     return
 
@@ -472,10 +470,6 @@ def workload_plot():
     plt.legend(framealpha=1, labelspacing=0.1, columnspacing=0.1, ncol=1, loc='best')
     plt.ylabel('$D$')
     plt.xlabel('$K$')
-    # plt.xlim(0, 600)
-    plt.xlim(20, 45)
-    # plt.ylim(0.2, 0.7)
-    plt.ylim(0.28, 0.38)
     plt.show()
     return
 

@@ -5,12 +5,11 @@
 import math
 import random
 import numpy as np
-import pynumeric
 import stats
-import scipy.special.lambertw
 import typedefs
 import complexity
 
+from pynverse import inversefunc
 from scipy.special import lambertw
 from numba import jit, njit, prange
 
@@ -74,7 +73,7 @@ def delay_mean_empiric(lmr, overhead=1.1, d_tot=None, n=100):
         f = lambda x: np.floor(
             np.minimum(np.maximum((x-a)/dropletc, 0), max_drops)
         ).sum()
-        t_droplets = pynumeric.cnuminv(f, d_tot, tol=dropletc)
+        t_droplets = inversefunc(f, y_values=d_tot)[0]
         result += max(t_servers, t_droplets)
 
     # average and add decoding delay

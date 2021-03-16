@@ -13,7 +13,6 @@ from multiprocessing import Pool
 from scipy.stats import expon
 from scipy.optimize import minimize
 
-pool = Pool(processes=8)
 def simulate(f, lmrs, cache=None, rerun=False):
     '''Compute the delay for each lmr in lmrs using f, i.e., f is called
     for each lmr in lmrs. Returns a dataframe.
@@ -34,7 +33,7 @@ def simulate(f, lmrs, cache=None, rerun=False):
             pass
     logging.info('simulating {} lmrs'.format(len(lmrs)))
     df = pd.DataFrame([typedefs.dct_from_lmr(lmr) for lmr in lmrs])
-    df['delay'] = pool.map(f, lmrs)
+    df['delay'] = list(map(f, lmrs))
     if isinstance(cache, str):
         filename = cache+'.csv'
         df.to_csv(filename, index=False)
